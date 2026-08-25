@@ -9,7 +9,7 @@ interface BrandLogoProps {
 const KNOWN: Record<string, { color: string; src: string }> = {
   razer: { color: "#44d62c", src: "/brands/razer.svg" },
   logitech: { color: "#00b8fc", src: "/brands/logitech.svg" },
-  ajazz: { color: "#ff6b35", src: "/brands/ajazz.svg" },
+  ajazz: { color: "#d81e06", src: "/brands/ajazz.png" },
   soundcore: { color: "#00c2a8", src: "/brands/soundcore.svg" },
   anker: { color: "#00c2a8", src: "/brands/soundcore.svg" },
 };

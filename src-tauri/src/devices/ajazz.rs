@@ -15,6 +15,23 @@ use std::time::Duration;
 
 const PRODUCT_FALLBACK: &str = "AJAZZ 2.4G 8K";
 
+/// The 2.4 GHz receivers all report the same generic OEM product string, so
+/// known models are labelled by VID/PID instead.
+const KNOWN_MODELS: &[(u16, u16, &str)] = &[(0x3151, 0x5007, "Ajazz AJ159 Apex")];
+
+fn model_label(info: &DeviceInfo) -> String {
+    if let Some((_, _, name)) = KNOWN_MODELS
+        .iter()
+        .find(|(vid, pid, _)| *vid == info.vendor_id() && *pid == info.product_id())
+    {
+        return (*name).to_string();
+    }
+    info.product_string()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(PRODUCT_FALLBACK)
+        .to_string()
+}
+
 fn name_looks_ajazz(info: &DeviceInfo) -> bool {
     let product = info.product_string().unwrap_or("").to_ascii_lowercase();
     let manufacturer = info.manufacturer_string().unwrap_or("").to_ascii_lowercase();
@@ -115,10 +132,7 @@ pub fn read() -> DeviceReading {
                 (
                     device_score(d),
                     d.path().to_owned(),
-                    d.product_string()
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or(PRODUCT_FALLBACK)
-                        .to_string(),
+                    model_label(d),
                 )
             })
             .collect();
@@ -149,9 +163,13 @@ pub fn read() -> DeviceReading {
             }
         }
 
+        let label = ranked
+            .first()
+            .map(|(_, _, product)| product.clone())
+            .unwrap_or_else(|| PRODUCT_FALLBACK.to_string());
         DeviceReading::failed(
             Brand::ajazz(),
-            PRODUCT_FALLBACK,
+            label,
             "2.4 GHz",
             "Receiver found (0x3151:0x5007) but 0xF7/0x05 battery poll failed (is the mouse on?).",
             true,

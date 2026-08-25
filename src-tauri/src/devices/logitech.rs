@@ -21,6 +21,7 @@ const LONG_LEN: usize = 20;
 const FEAT_BATTERY_STATUS: u16 = 0x1000;
 const FEAT_BATTERY_VOLTAGE: u16 = 0x1001;
 const FEAT_UNIFIED_BATTERY: u16 = 0x1004;
+const FEAT_DEVICE_NAME: u16 = 0x0005;
 const SW_ID: u8 = 0x0A;
 const VENDOR_PAGE_MIN: u16 = 0xFF00;
 
@@ -28,6 +29,15 @@ fn product_label(name: Option<&str>) -> String {
     name.filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "Logitech".to_string())
+}
+
+/// The receiver's own product string is useless as a device label.
+fn fallback_label(product: &str) -> String {
+    if product.is_empty() || is_receiver_name(product) {
+        "Logitech Wireless Device".to_string()
+    } else {
+        product.to_string()
+    }
 }
 
 fn is_receiver_name(name: &str) -> bool {
@@ -288,6 +298,65 @@ fn try_device_index(dev: &HidDevice, device_index: u8) -> Option<(u8, bool)> {
     read_hidpp10_battery(dev, device_index)
 }
 
+/// 0x0005 DeviceNameAndType — the peripheral's own model name. A mouse paired
+/// through a LIGHTSPEED receiver inherits the receiver's "USB Receiver" product
+/// string over USB, so the name has to be asked for over HID++ instead.
+fn read_device_name(dev: &HidDevice, device_index: u8) -> Option<String> {
+    let feat_index = get_feature_index(dev, device_index, FEAT_DEVICE_NAME)?;
+
+    let mut msg = [0u8; LONG_LEN];
+    msg[0] = LONG_ID;
+    msg[1] = device_index;
+    msg[2] = feat_index;
+    msg[3] = (0x00 << 4) | SW_ID; // getCount
+    drain(dev);
+    if !write_msg(dev, &msg) {
+        return None;
+    }
+    let body = read_matching(dev, LONG_ID, device_index, feat_index, 0x00, 600)?;
+    let length = (*body.get(3)? as usize).min(64);
+    if length == 0 {
+        return None;
+    }
+
+    // getDeviceName returns up to 16 characters per call.
+    let mut name = String::with_capacity(length);
+    while name.len() < length {
+        let mut msg = [0u8; LONG_LEN];
+        msg[0] = LONG_ID;
+        msg[1] = device_index;
+        msg[2] = feat_index;
+        msg[3] = (0x01 << 4) | SW_ID; // getDeviceName
+        msg[4] = name.len() as u8;
+        drain(dev);
+        if !write_msg(dev, &msg) {
+            break;
+        }
+        let Some(body) = read_matching(dev, LONG_ID, device_index, feat_index, 0x01, 600) else {
+            break;
+        };
+        let Some(chunk) = body.get(3..) else {
+            break;
+        };
+        let before = name.len();
+        for &byte in chunk {
+            if name.len() >= length || byte == 0 {
+                break;
+            }
+            if byte.is_ascii_graphic() || byte == b' ' {
+                name.push(byte as char);
+            }
+        }
+        // No progress means the device stopped answering — do not spin.
+        if name.len() == before {
+            break;
+        }
+    }
+
+    let trimmed = name.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 fn probe_device(dev: &HidDevice, product: &str) -> Option<DeviceReading> {
     // Direct peripherals answer on 0xFF; receiver-attached slots use 1..6.
     let indices: &[u8] = if is_receiver_name(product) {
@@ -297,9 +366,12 @@ fn probe_device(dev: &HidDevice, product: &str) -> Option<DeviceReading> {
     };
     for &index in indices {
         if let Some((percent, charging)) = try_device_index(dev, index) {
+            let name = read_device_name(dev, index)
+                .filter(|found| !is_receiver_name(found))
+                .unwrap_or_else(|| fallback_label(product));
             return Some(DeviceReading::ok(
-                Brand::classify("Logitech", product),
-                product,
+                Brand::classify("Logitech", &name),
+                name,
                 "2.4 GHz",
                 percent,
                 charging,
