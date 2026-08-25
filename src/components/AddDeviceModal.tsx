@@ -68,6 +68,15 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
     [names],
   );
 
+  const rename = useCallback(async (device: LearnedDevice, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === device.name) return;
+    // The backend upserts by id, so re-adding with a new name renames it.
+    const list = await addLearnedDevice({ ...device, name: trimmed });
+    if (list) setAdded(list);
+    void requestRefresh();
+  }, []);
+
   const drop = useCallback(async (id: string) => {
     const list = await removeLearnedDevice(id);
     if (list) setAdded(list);
@@ -133,6 +142,7 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
                   aria-label={t("deviceName")}
                   className="mb-1 w-full rounded-lg border border-white/10 bg-black/30 px-2 py-1.5 text-sm text-neutral-100 outline-none focus:border-accent/50"
                 />
+                <p className="mb-1 text-[10px] text-neutral-500">{t("deviceNameHint")}</p>
                 <p className="mb-2 text-[10px] tracking-wide text-neutral-600 uppercase">
                   {candidate.id}
                 </p>
@@ -174,15 +184,24 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
 
           {added.length > 0 ? (
             <section className="mt-4 border-t border-white/8 pt-3">
-              <p className="mb-2 text-xs font-medium tracking-wide text-neutral-400 uppercase">
+              <p className="text-xs font-medium tracking-wide text-neutral-400 uppercase">
                 {t("addedDevices")}
               </p>
+              <p className="mb-2 text-[10px] text-neutral-600">{t("renameHint")}</p>
               {added.map((device) => (
                 <div
                   key={device.id}
                   className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-white/8 bg-ink-850/50 px-3 py-2"
                 >
-                  <span className="truncate text-xs text-neutral-300">{device.name}</span>
+                  <input
+                    defaultValue={device.name}
+                    aria-label={t("deviceName")}
+                    onBlur={(event) => void rename(device, event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                    }}
+                    className="min-w-0 flex-1 truncate rounded-md bg-transparent px-1 py-0.5 text-xs text-neutral-300 outline-none transition hover:bg-white/5 focus:bg-black/30 focus:text-neutral-100"
+                  />
                   <button
                     type="button"
                     onClick={() => void drop(device.id)}

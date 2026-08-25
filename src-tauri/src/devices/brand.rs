@@ -89,6 +89,10 @@ impl Brand {
             ("redmi", "xiaomi"),
             ("huawei", "huawei"),
             ("keychron", "keychron"),
+            ("aula", "aula"),
+            ("redragon", "redragon"),
+            ("rapoo", "rapoo"),
+            ("akko", "akko"),
             ("glorious", "glorious"),
             ("pulsar", "pulsar"),
             ("varmilo", "varmilo"),
@@ -105,15 +109,31 @@ impl Brand {
                 return Self::new(*id);
             }
         }
-        // First meaningful token of the product name.
+        // Fall back to the first token that could actually be a brand. A
+        // generic OEM string like "2.4G Wireless Receiver" has none, and
+        // inventing one from it produced brands such as "4g".
         for token in product.split(|c: char| !c.is_ascii_alphanumeric()) {
-            if token.len() >= 2 && !token.eq_ignore_ascii_case("usb") && !token.eq_ignore_ascii_case("hid")
-            {
-                return Self::new(token);
+            if token.len() < 3 || is_noise_token(token) {
+                continue;
             }
+            // A brand does not start with a digit ("2", "4G", "8K").
+            if !token.starts_with(|c: char| c.is_ascii_alphabetic()) {
+                continue;
+            }
+            return Self::new(token);
         }
         Self::generic()
     }
+}
+
+/// Words that describe the hardware, not who made it.
+fn is_noise_token(token: &str) -> bool {
+    const NOISE: &[&str] = &[
+        "usb", "hid", "wireless", "receiver", "dongle", "adapter", "gaming", "keyboard", "mouse",
+        "headset", "headphone", "earbuds", "device", "composite", "control", "controls", "rgb",
+        "ghz", "bluetooth", "generic", "input",
+    ];
+    NOISE.iter().any(|word| token.eq_ignore_ascii_case(word))
 }
 
 fn slugify(s: &str) -> String {
@@ -140,4 +160,41 @@ fn title_case(slug: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Brand;
+
+    #[test]
+    fn known_vendors_win_over_token_guessing() {
+        assert_eq!(Brand::classify("Logitech", "USB Receiver").label(), "Logitech");
+        assert_eq!(Brand::classify("", "AJAZZ 2.4G 8K").label(), "Ajazz");
+        assert_eq!(Brand::classify("", "Aula F75 Keyboard").label(), "Aula");
+        assert_eq!(Brand::classify("", "Razer BlackShark V2").label(), "Razer");
+    }
+
+    #[test]
+    fn generic_oem_strings_do_not_invent_a_brand() {
+        // Used to yield "4g" from the "4G" token and show it as the device name.
+        for product in [
+            "2.4G Wireless Receiver",
+            "2.4G Wireless Device",
+            "USB Gaming Keyboard",
+            "Wireless Dongle",
+            "",
+        ] {
+            assert_eq!(
+                Brand::classify("", product).label(),
+                "Device",
+                "product: {product}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_but_real_brands_are_title_cased() {
+        assert_eq!(Brand::classify("", "Keychron K8 Pro").label(), "Keychron");
+        assert_eq!(Brand::classify("", "Zuoya GMK87").label(), "Zuoya");
+    }
 }

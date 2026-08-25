@@ -43,7 +43,9 @@ export function DeviceCard({
         <BrandLogo brand={device.brand} size={20} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="truncate text-sm font-semibold text-neutral-100">{device.brandLabel}</h3>
+            <h3 className="truncate text-sm font-semibold text-neutral-100">
+              {device.product || device.brandLabel}
+            </h3>
             <span
               className={`inline-flex items-center gap-1.5 text-[11px] font-medium ${
                 online ? "text-neutral-300" : device.present ? "text-amber-400/90" : "text-neutral-500"
@@ -62,9 +64,7 @@ export function DeviceCard({
                   : offlineLabel}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-neutral-500">
-            {device.product || device.brandLabel}
-          </p>
+          <p className="mt-0.5 truncate text-[11px] text-neutral-500">{device.brandLabel}</p>
         </div>
       </div>
 
