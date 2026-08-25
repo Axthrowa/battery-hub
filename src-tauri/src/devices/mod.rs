@@ -302,7 +302,8 @@ pub fn read_all() -> DeviceSnapshot {
         for d in list {
             push_unique(&mut merged, d);
         }
-    }    if let Ok(list) = rx_u.recv() {
+    }
+    if let Ok(list) = rx_u.recv() {
         for d in list {
             push_unique(&mut merged, d);
         }

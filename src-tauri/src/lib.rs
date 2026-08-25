@@ -239,7 +239,8 @@ fn notify_connected(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapshot)
     }
 }
 
-/// Fires once per product when SOC drops below 20%. Format: "{product} low battery".
+/// Fires once per product when SOC drops below the threshold, and again only
+/// after it recovers. Format: "{product} low battery".
 fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapshot) {
     let mut notified = shared.low_battery_notified.lock().unwrap();
     for device in &snapshot.devices {
@@ -261,6 +262,7 @@ fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
             device.product.clone()
         };
         let body = format!("{product} low battery");
+        devices::diagnostics::emit_line(&format!("[notify] {body} ({percent}%)"));
         if let Err(err) = app
             .notification()
             .builder()
@@ -670,8 +672,17 @@ pub fn run() {
                     _ => {}
                 });
 
-            if let Some(icon) = app.default_window_icon().cloned() {
-                tray = tray.icon(icon);
+            // The battery artwork is tall, and the tray renders it at 16 px:
+            // use the square-cropped variant so it does not shrink to a sliver.
+            const TRAY_ICON: &[u8] = include_bytes!("../icons/tray.png");
+            match tauri::image::Image::from_bytes(TRAY_ICON) {
+                Ok(icon) => tray = tray.icon(icon),
+                Err(err) => {
+                    eprintln!("tray icon unavailable, falling back: {err}");
+                    if let Some(icon) = app.default_window_icon().cloned() {
+                        tray = tray.icon(icon);
+                    }
+                }
             }
             tray.build(app)?;
 

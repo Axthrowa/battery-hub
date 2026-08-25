@@ -58,8 +58,14 @@ readers. The generic readers need no table.
 `src-tauri/icons/` is generated from `app-icon.png` (1024×1024, transparent):
 
 ```bash
-npm run icon        # tauri icon app-icon.png
+npm run icon                    # tauri icon app-icon.png (full set)
+python scripts/make-icons.py    # then rebuild the Windows sizes
 ```
+
+The second step matters: the artwork is a tall battery, so a plain square
+downscale leaves a sliver at 16x16 — the size Task Manager, the tray and the
+title bar use. `make-icons.py` gives those sizes their own square crop and
+keeps the whole device for 48 px and above.
 
 ## Develop
 
