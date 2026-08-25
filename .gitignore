@@ -1,0 +1,42 @@
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.spec
+
+# --- Node / Vite ---
+node_modules/
+dist/
+
+# --- Rust / Tauri ---
+target/
+gen/schemas/
+
+# --- .NET ---
+bin/
+obj/
+
+# --- C++ / MSVC ---
+*.obj
+*.res
+cpp/BlackSharkBattery/publish/
+
+# --- Build output & installers (GitHub Releases'e ait) ---
+build/
+blackshark-desktop/release/
+*.exe
+*.msi
+*.pdb
+
+# --- Runtime output ---
+battery-once.txt
+*.log
+
+# --- Editors / OS ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
