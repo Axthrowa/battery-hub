@@ -1,4 +1,0 @@
-pystray>=0.19.5
-Pillow>=10.0.0
-hidapi>=0.14.0
-pyinstaller>=6.0.0

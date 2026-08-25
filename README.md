@@ -1,24 +1,100 @@
-# BlackShark Battery
+# Battery Hub
 
-Razer BlackShark V2 HyperSpeed pil yüzdesi — Windows (Synapse yok).
+Multi-brand wireless battery monitor for Windows (Tauri 2 + React).
 
-## Tauri + React (önerilen UI)
+## How devices are found
 
-Ayarlar modalı, TR/EN, yenileme süresi, kalıcı ayarlar:
+Every poll runs these readers in parallel and merges them (duplicates collapse,
+a vendor reading beats a generic one):
 
-```powershell
-cd blackshark-desktop
+| Reader | Covers |
+|--------|--------|
+| `devices/ble_gatt.rs` | Any paired Bluetooth LE device exposing GATT Battery Service `0x180F` / Battery Level `0x2A19` |
+| `devices/windows_battery.rs` | Classic Bluetooth / AEP devices via `DEVPKEY_Bluetooth_Battery` (SetupAPI) |
+| `devices/hid_battery.rs` | Any HID device whose report descriptor declares `Battery Strength` (page `0x06`) or Battery System (page `0x85`) |
+| `devices/razer.rs` | Razer BlackShark V2 HyperSpeed — vendor HID over the HyperSpeed dongle |
+| `devices/logitech.rs` | Logitech HID++ `0x1000` / `0x1001` on the USB receiver |
+| `devices/ajazz.rs` | Ajazz 2.4 GHz custom HID |
+| `devices/soundcore.rs` | Soundcore / Anker over Bluetooth |
+
+`devices/hid_descriptor.rs` is the HID report-descriptor parser behind the
+generic path — it locates the exact bits holding the state of charge, so no
+byte guessing is involved. It is pure logic and unit tested:
+
+```bash
+cargo test -p battery-hub hid_descriptor
+```
+
+## Tray behaviour
+
+Closing the window **destroys WebView2** (no `hide()`). The Rust host stays in
+the system tray with near-zero UI RAM; tray → **Göster** recreates the window.
+The console window is suppressed via `windows_subsystem = "windows"` in
+`src-tauri/src/main.rs`.
+
+## Vendor IDs
+
+`src-tauri/src/devices/hid.rs` holds the VID/PID table for the vendor-specific
+readers. The generic readers need no table.
+
+## Icons
+
+`src-tauri/icons/` is generated from `app-icon.png` (1024×1024, transparent):
+
+```bash
+npm run icon        # tauri icon app-icon.png
+```
+
+## Develop
+
+```bash
 npm install
 npm run tauri:dev
+```
+
+## Build (Windows)
+
+```bash
+npm install
 npm run tauri:build
 ```
 
-Ayrıntılar: [blackshark-desktop/README.md](blackshark-desktop/README.md)
+| Artifact | Path |
+|----------|------|
+| Portable `.exe` | `src-tauri/target/release/battery-hub.exe` |
+| NSIS setup | `src-tauri/target/release/bundle/nsis/Battery Hub_0.1.0_x64-setup.exe` |
 
-## C++ (Win32 tepsi)
+Add `"msi"` to `bundle.targets` in `src-tauri/tauri.conf.json` for a WiX MSI as
+well. Build on **Windows** — WSL alone cannot produce a native WebView2 binary.
 
-`cpp\BlackSharkBattery\publish\BlackSharkBattery.exe` — `cpp\BlackSharkBattery\build.bat`
+## Code signing
 
-## C# / Python
+The certificate is machine-specific, so it is kept out of `tauri.conf.json`.
+Copy the template and fill in your own thumbprint:
 
-`csharp\` ve kök Python uygulaması da mevcut.
+```bash
+cp src-tauri/tauri.local.conf.json.example src-tauri/tauri.local.conf.json
+```
+
+```bash
+npm run tauri:build:signed   # merges the local config, signs the installer
+npm run sign                 # signs the portable battery-hub.exe
+```
+
+`npm run tauri:build` still produces an unsigned build, so cloning and building
+this repo works without any certificate. The extra `npm run sign` pass exists
+because Tauri signs the executable before packing it into the installer and then
+restores the unsigned original on disk.
+
+A self-signed certificate is only trusted where it has been imported into
+`Cert:\CurrentUser\Root`. It removes the "Unknown publisher" prompt on that
+machine; it does **not** clear Microsoft Defender SmartScreen elsewhere, because
+SmartScreen scores publisher reputation, not the mere presence of a signature.
+For distribution, use an OV/EV certificate from a public CA — an EV certificate
+is what clears SmartScreen from day one.
+
+## Optional: restart when the receiver is re-plugged
+
+```powershell
+scripts\device-trigger\Install-DeviceTrigger.ps1
+```

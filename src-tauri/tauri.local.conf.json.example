@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to tauri.local.conf.json and set your own certificate. Build with: npm run tauri:build:signed",
+  "bundle": {
+    "windows": {
+      "certificateThumbprint": "YOUR_CERTIFICATE_SHA1_THUMBPRINT"
+    }
+  }
+}

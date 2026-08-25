@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@theme {
+  --color-razer: #44d62c;
+  --color-logitech: #00b8fc;
+  --color-ajazz: #ff6b35;
+  --color-soundcore: #00c2a8;
+  --color-accent: #5eead4;
+  --color-ink-950: #08090b;
+  --color-ink-900: #0e1013;
+  --color-ink-850: #14171b;
+  --color-ink-800: #1b1f24;
+  --color-ink-700: #262b31;
+  --font-display: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background:
+      radial-gradient(820px 420px at 12% -10%, rgba(94, 234, 212, 0.1), transparent 55%),
+      radial-gradient(700px 380px at 92% 8%, rgba(68, 214, 44, 0.08), transparent 50%),
+      linear-gradient(165deg, #0a0c10 0%, #08090b 45%, #0c1014 100%);
+    color: #eef1f4;
+    font-family: var(--font-display);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  button {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .card-enter {
+    animation: card-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @keyframes card-rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .pulse-dot {
+    animation: pulse-dot 1.8s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      opacity: 0.45;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.15);
+    }
+  }
+}

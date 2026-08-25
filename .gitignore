@@ -1,42 +1,28 @@
-# --- Python ---
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-*.egg-info/
-*.spec
-
-# --- Node / Vite ---
-node_modules/
-dist/
-
-# --- Rust / Tauri ---
-target/
-gen/schemas/
-
-# --- .NET ---
-bin/
-obj/
-
-# --- C++ / MSVC ---
-*.obj
-*.res
-cpp/BlackSharkBattery/publish/
-
-# --- Build output & installers (GitHub Releases'e ait) ---
-build/
-blackshark-desktop/release/
-*.exe
-*.msi
-*.pdb
-
-# --- Runtime output ---
-battery-once.txt
+# Logs
+logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# --- Editors / OS ---
-.idea/
+node_modules
+dist
+dist-win
+
+# Local signing configuration (machine-specific certificate)
+src-tauri/tauri.local.conf.json
+dist-ssr
+*.local
+
+# Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+.idea
 .DS_Store
-Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
