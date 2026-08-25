@@ -2,7 +2,7 @@ export const resources = {
   tr: {
     translation: {
       appName: "Battery Hub",
-      subtitle: "Razer · Logitech · Ajazz · Soundcore",
+      subtitle: "Kablosuz cihaz pil takibi",
       dashboard: "Cihaz Paneli",
       batteryStatus: "Pil Durumu",
       refreshNow: "Şimdi Yenile",
@@ -47,6 +47,9 @@ export const resources = {
       remove: "Kaldır",
       addedDevices: "Eklenen cihazlar",
       renameHint: "Adı değiştirmek için üzerine yazın",
+      pickLogo: "Logo seç",
+      removeLogo: "Logoyu kaldır",
+      logoHint: "Logoya tıklayarak cihazın kendi görselini kullanabilirsin",
       deviceName: "Cihaz adı",
       deviceNameHint: "Alıcılar genelde jenerik bir ad bildirir — cihazın gerçek adını yazın",
       levelHigh: "İyi",
@@ -57,7 +60,7 @@ export const resources = {
   en: {
     translation: {
       appName: "Battery Hub",
-      subtitle: "Razer · Logitech · Ajazz · Soundcore",
+      subtitle: "Wireless battery monitor",
       dashboard: "Device Dashboard",
       batteryStatus: "Battery Status",
       refreshNow: "Refresh Now",
@@ -102,6 +105,9 @@ export const resources = {
       remove: "Remove",
       addedDevices: "Added devices",
       renameHint: "Type over a name to change it",
+      pickLogo: "Choose logo",
+      removeLogo: "Remove logo",
+      logoHint: "Click a logo to use the device's own artwork",
       deviceName: "Device name",
       deviceNameHint: "Receivers usually report a generic name - type the real device name",
       levelHigh: "Good",

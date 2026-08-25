@@ -8,6 +8,11 @@ interface DeviceCardProps {
   chargingLabel: string;
   offlineLabel: string;
   locale: string;
+  logo?: string;
+  onPickLogo?: () => void;
+  onClearLogo?: () => void;
+  pickLogoLabel?: string;
+  clearLogoLabel?: string;
 }
 
 export function DeviceCard({
@@ -16,6 +21,11 @@ export function DeviceCard({
   chargingLabel,
   offlineLabel,
   locale,
+  logo,
+  onPickLogo,
+  onClearLogo,
+  pickLogoLabel,
+  clearLogoLabel,
 }: DeviceCardProps) {
   const online = device.ok;
   const percent = device.percent;
@@ -40,7 +50,15 @@ export function DeviceCard({
       }}
     >
       <div className="mb-3 flex items-start gap-3">
-        <BrandLogo brand={device.brand} size={20} />
+        <BrandLogo
+          brand={device.brand}
+          size={20}
+          logo={logo}
+          onPick={onPickLogo}
+          onClear={onClearLogo}
+          pickLabel={pickLogoLabel}
+          clearLabel={clearLogoLabel}
+        />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <h3 className="truncate text-sm font-semibold text-neutral-100">

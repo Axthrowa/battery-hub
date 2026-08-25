@@ -5,6 +5,7 @@ import { DeviceCard } from "./components/DeviceCard";
 import { SettingsModal } from "./components/SettingsModal";
 import { useSettings } from "./context/SettingsContext";
 import type { BatteryReading, DeviceReading, DeviceSnapshot } from "./lib/bridge";
+import { pickLogoFile, useLogos } from "./lib/logos";
 import {
   EVENT_BATTERY,
   EVENT_DEVICES,
@@ -40,6 +41,7 @@ function visibleDevices(snapshot: DeviceSnapshot | null): DeviceReading[] {
 export default function App() {
   const { t } = useTranslation();
   const { settings, ready } = useSettings();
+  const { logoFor, setLogo, clearLogo, moveLogo } = useLogos();
   const [reading, setReading] = useState<BatteryReading | null>(null);
   const [devices, setDevices] = useState<DeviceSnapshot | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -110,6 +112,14 @@ export default function App() {
     return () => window.removeEventListener("focus", onFocus);
   }, [applyDevices, applyReading]);
 
+  const pickLogo = useCallback(
+    async (name: string) => {
+      const logo = await pickLogoFile();
+      if (logo) await setLogo(name, logo);
+    },
+    [setLogo],
+  );
+
   const cards = useMemo(() => visibleDevices(devices), [devices]);
   const onlineCount = cards.filter((d) => d.ok).length;
   const totalCount = cards.length;
@@ -153,6 +163,11 @@ export default function App() {
               chargingLabel={t("charging")}
               offlineLabel={t("offline")}
               locale={settings.locale}
+              logo={logoFor(device.product)}
+              onPickLogo={() => void pickLogo(device.product)}
+              onClearLogo={() => void clearLogo(device.product)}
+              pickLogoLabel={t("pickLogo")}
+              clearLogoLabel={t("removeLogo")}
             />
           ))}
         </div>
@@ -207,7 +222,14 @@ export default function App() {
       </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <AddDeviceModal open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddDeviceModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        logoFor={logoFor}
+        onPickLogo={pickLogo}
+        onClearLogo={clearLogo}
+        onRenameLogo={moveLogo}
+      />
     </div>
   );
 }

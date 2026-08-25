@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { BrandLogo } from "./BrandLogo";
 import type { CandidateValue, DeviceCandidate, LearnedDevice } from "../lib/bridge";
 import {
   addLearnedDevice,
@@ -12,6 +13,10 @@ import {
 interface AddDeviceModalProps {
   open: boolean;
   onClose: () => void;
+  logoFor: (name: string) => string | undefined;
+  onPickLogo: (name: string) => Promise<void>;
+  onClearLogo: (name: string) => Promise<void>;
+  onRenameLogo: (fromName: string, toName: string) => Promise<void>;
 }
 
 function deviceKey(candidate: DeviceCandidate, value: CandidateValue) {
@@ -25,7 +30,14 @@ function deviceKey(candidate: DeviceCandidate, value: CandidateValue) {
   ].join(":");
 }
 
-export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
+export function AddDeviceModal({
+  open,
+  onClose,
+  logoFor,
+  onPickLogo,
+  onClearLogo,
+  onRenameLogo,
+}: AddDeviceModalProps) {
   const { t } = useTranslation();
   const [scanning, setScanning] = useState(false);
   const [scanned, setScanned] = useState(false);
@@ -74,8 +86,9 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
     // The backend upserts by id, so re-adding with a new name renames it.
     const list = await addLearnedDevice({ ...device, name: trimmed });
     if (list) setAdded(list);
+    await onRenameLogo(device.name, trimmed);
     void requestRefresh();
-  }, []);
+  }, [onRenameLogo]);
 
   const drop = useCallback(async (id: string) => {
     const list = await removeLearnedDevice(id);
@@ -134,6 +147,18 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
                 key={candidate.id}
                 className="mb-3 rounded-xl border border-white/10 bg-ink-850/60 p-3"
               >
+                <div className="mb-2 flex items-center gap-2">
+                  <BrandLogo
+                    brand="generic"
+                    size={18}
+                    logo={logoFor(names[candidate.id] ?? candidate.name)}
+                    onPick={() => void onPickLogo(names[candidate.id] ?? candidate.name)}
+                    onClear={() => void onClearLogo(names[candidate.id] ?? candidate.name)}
+                    pickLabel={t("pickLogo")}
+                    clearLabel={t("removeLogo")}
+                  />
+                  <span className="text-[10px] text-neutral-500">{t("logoHint")}</span>
+                </div>
                 <input
                   value={names[candidate.id] ?? candidate.name}
                   onChange={(event) =>
@@ -193,6 +218,15 @@ export function AddDeviceModal({ open, onClose }: AddDeviceModalProps) {
                   key={device.id}
                   className="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-white/8 bg-ink-850/50 px-3 py-2"
                 >
+                  <BrandLogo
+                    brand="generic"
+                    size={16}
+                    logo={logoFor(device.name)}
+                    onPick={() => void onPickLogo(device.name)}
+                    onClear={() => void onClearLogo(device.name)}
+                    pickLabel={t("pickLogo")}
+                    clearLabel={t("removeLogo")}
+                  />
                   <input
                     defaultValue={device.name}
                     aria-label={t("deviceName")}
