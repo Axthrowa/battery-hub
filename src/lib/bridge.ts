@@ -75,6 +75,43 @@ export interface BleBatteryInfo {
 export const readBluetoothBattery = () =>
   safeInvoke<BleBatteryInfo[]>("read_bluetooth_battery");
 
+/** A byte the scan believes could be a state of charge. */
+export interface CandidateValue {
+  usagePage: number;
+  reportId: number;
+  byteOffset: number;
+  percent: number;
+}
+
+export interface DeviceCandidate {
+  id: string;
+  name: string;
+  vendorId: number;
+  productId: number;
+  /** Already reported through a standard battery field. */
+  automatic: boolean;
+  added: boolean;
+  values: CandidateValue[];
+}
+
+export interface LearnedDevice {
+  id: string;
+  name: string;
+  vendorId: number;
+  productId: number;
+  usagePage: number;
+  reportId: number;
+  byteOffset: number;
+  maxValue: number;
+}
+
+export const scanDevices = () => safeInvoke<DeviceCandidate[]>("scan_devices");
+export const learnedDevices = () => safeInvoke<LearnedDevice[]>("learned_devices");
+export const addLearnedDevice = (device: LearnedDevice) =>
+  safeInvoke<LearnedDevice[]>("add_learned_device", { device });
+export const removeLearnedDevice = (id: string) =>
+  safeInvoke<LearnedDevice[]>("remove_learned_device", { id });
+
 export const applyLocalization = (
   locale: string,
   labels: { show: string; settings: string; quit: string },

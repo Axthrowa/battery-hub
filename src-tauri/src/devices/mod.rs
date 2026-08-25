@@ -4,9 +4,11 @@ mod ajazz;
 mod brand;
 pub mod ble_gatt;
 pub mod diagnostics;
+pub mod discover;
 pub mod hid;
 mod hid_battery;
 mod hid_descriptor;
+pub mod learned;
 mod logitech;
 mod razer;
 pub mod soundcore;
@@ -213,6 +215,7 @@ pub fn read_all() -> DeviceSnapshot {
     let (tx_w, rx_w) = std::sync::mpsc::channel();
     let (tx_g, rx_g) = std::sync::mpsc::channel();
     let (tx_h, rx_h) = std::sync::mpsc::channel();
+    let (tx_u, rx_u) = std::sync::mpsc::channel();
 
     let timings_razer = timings.clone();
     let h_r = thread::spawn(move || {
@@ -262,6 +265,13 @@ pub fn read_all() -> DeviceSnapshot {
         let value = hid_battery::read_all();
         record(&timings_hid, "hid", started);
         let _ = tx_h.send(value);
+    });
+    let timings_learned = timings.clone();
+    let h_u = thread::spawn(move || {
+        let started = Instant::now();
+        let value = learned::read_all();
+        record(&timings_learned, "learned", started);
+        let _ = tx_u.send(value);
     });
 
     let mut merged = Vec::new();
@@ -292,6 +302,10 @@ pub fn read_all() -> DeviceSnapshot {
         for d in list {
             push_unique(&mut merged, d);
         }
+    }    if let Ok(list) = rx_u.recv() {
+        for d in list {
+            push_unique(&mut merged, d);
+        }
     }
 
     let _ = h_r.join();
@@ -301,6 +315,7 @@ pub fn read_all() -> DeviceSnapshot {
     let _ = h_w.join();
     let _ = h_g.join();
     let _ = h_h.join();
+    let _ = h_u.join();
 
     // Stable-ish order: OK first, then by brand label.
     merged.sort_by(|a, b| {

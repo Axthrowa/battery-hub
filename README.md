@@ -25,6 +25,22 @@ byte guessing is involved. It is pure logic and unit tested:
 cargo test -p battery-hub hid_descriptor
 ```
 
+## Adding a device the readers do not know
+
+Hardware that exposes no standard battery field still tends to publish the
+state of charge as a plain byte in a vendor feature report. **Cihaz Ekle** in
+the UI samples every HID report twice, keeps the bytes that stayed put and look
+like a percentage, and offers them. The user recognises the real value, and only
+that exact location — `VID:PID:usage page:report ID:byte offset` — is stored in
+`%LOCALAPPDATA%\Battery Hub\devices.json` and read back on every poll.
+
+Guessing is confined to this confirmed path: the automatic readers never invent
+a percentage. To see what a scan finds without opening the UI:
+
+```powershell
+battery-hub.exe --scan-devices    # writes the candidates to diagnostics.log
+```
+
 ## Tray behaviour
 
 Closing the window **destroys WebView2** (no `hide()`). The Rust host stays in

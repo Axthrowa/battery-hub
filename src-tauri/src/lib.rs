@@ -7,6 +7,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use devices::{BatteryReading, DeviceReading, DeviceSnapshot};
 use devices::ble_gatt::BleBatteryInfo;
+use devices::discover::DeviceCandidate;
+use devices::learned::LearnedDevice;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
@@ -28,6 +30,7 @@ const MIN_POLL_SECONDS: u64 = 5;
 const WATCH_POLL_SECONDS: u64 = 15;
 const DISCONNECT_STRIKES: u32 = 2;
 const ARG_REQUIRE_DONGLE: &str = "--require-dongle";
+const ARG_SCAN_DEVICES: &str = "--scan-devices";
 const SHUTDOWN_GRACE_MS: u64 = 250;
 /// Per-device low-battery threshold (exclusive: notify when percent < this).
 const LOW_BATTERY_THRESHOLD: u8 = 20;
@@ -423,6 +426,37 @@ fn read_bluetooth_battery() -> Vec<BleBatteryInfo> {
     devices::ble_gatt::scan_ble_batteries()
 }
 
+/// Deep scan for hardware whose battery byte the user can confirm by sight.
+#[tauri::command(async)]
+fn scan_devices() -> Vec<DeviceCandidate> {
+    devices::discover::scan()
+}
+
+#[tauri::command]
+fn learned_devices() -> Vec<LearnedDevice> {
+    devices::learned::all()
+}
+
+#[tauri::command]
+fn add_learned_device(
+    state: State<'_, Arc<Shared>>,
+    device: LearnedDevice,
+) -> Result<Vec<LearnedDevice>, String> {
+    let list = devices::learned::add(device)?;
+    state.nudge(true);
+    Ok(list)
+}
+
+#[tauri::command]
+fn remove_learned_device(
+    state: State<'_, Arc<Shared>>,
+    id: String,
+) -> Result<Vec<LearnedDevice>, String> {
+    let list = devices::learned::remove(&id)?;
+    state.nudge(true);
+    Ok(list)
+}
+
 #[tauri::command]
 fn last_reading(state: State<'_, Arc<Shared>>) -> Option<BatteryReading> {
     state.last.lock().unwrap().clone()
@@ -483,6 +517,25 @@ fn save_session(app: AppHandle, data: serde_json::Value) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Support path: run the add-device scan, write the result to
+    // diagnostics.log and exit without starting the UI.
+    if std::env::args().any(|arg| arg == ARG_SCAN_DEVICES) {
+        let started = Instant::now();
+        let found = devices::discover::scan();
+        devices::diagnostics::emit_line(&format!(
+            "[scan] {} candidate(s) in {:.1}s",
+            found.len(),
+            started.elapsed().as_secs_f32()
+        ));
+        for candidate in &found {
+            devices::diagnostics::emit_line(&format!(
+                "[scan] {}",
+                serde_json::to_string(candidate).unwrap_or_default()
+            ));
+        }
+        return;
+    }
+
     let shared = Arc::new(Shared::new());
 
     tauri::Builder::default()
@@ -498,6 +551,10 @@ pub fn run() {
             get_battery,
             get_devices,
             read_bluetooth_battery,
+            scan_devices,
+            learned_devices,
+            add_learned_device,
+            remove_learned_device,
             last_reading,
             last_devices,
             refresh_now,

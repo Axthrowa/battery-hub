@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { AddDeviceModal } from "./components/AddDeviceModal";
 import { DeviceCard } from "./components/DeviceCard";
 import { SettingsModal } from "./components/SettingsModal";
 import { useSettings } from "./context/SettingsContext";
@@ -43,6 +44,7 @@ export default function App() {
   const [devices, setDevices] = useState<DeviceSnapshot | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const timeoutRef = useRef<number | null>(null);
 
   const applyReading = useCallback((value: BatteryReading | null) => {
@@ -162,6 +164,14 @@ export default function App() {
           </p>
         ) : null}
 
+        <button
+          type="button"
+          onClick={() => setAddOpen(true)}
+          className="mt-3 w-full rounded-xl border border-dashed border-white/15 py-2.5 text-xs font-medium text-neutral-400 transition hover:border-accent/40 hover:text-accent"
+        >
+          + {t("addDevice")}
+        </button>
+
         {reading && !reading.ok && reading.error && onlineCount === 0 ? (
           <p className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">
             {reading.error}
@@ -197,6 +207,7 @@ export default function App() {
       </div>
 
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <AddDeviceModal open={addOpen} onClose={() => setAddOpen(false)} />
     </div>
   );
 }
