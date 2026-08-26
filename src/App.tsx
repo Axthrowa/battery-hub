@@ -123,8 +123,6 @@ export default function App() {
 
   const cards = useMemo(() => visibleDevices(devices), [devices]);
   const onlineCount = cards.length;
-  // Known devices, connected or not — the ratio still reports what dropped off.
-  const totalCount = devices?.devices.length ?? 0;
 
   return (
     <div className="flex h-full flex-col px-5 pt-5 pb-5">
@@ -135,7 +133,7 @@ export default function App() {
           </p>
           <h1 className="mt-0.5 text-xl leading-tight font-semibold text-neutral-50">{t("appName")}</h1>
           <p className="mt-0.5 text-xs text-neutral-500">
-            {t("subtitle")} · {onlineCount}/{Math.max(totalCount, 1)} {t("online").toLowerCase()}
+            {t("subtitle")} · {onlineCount} {t("online").toLowerCase()}
           </p>
         </div>
         <button
