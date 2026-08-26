@@ -32,10 +32,11 @@ function GearIcon() {
   );
 }
 
+// Only devices that answered this poll get a card, matching the tray menu.
+// A receiver left plugged in with the device switched off is not a device the
+// panel should keep showing.
 function visibleDevices(snapshot: DeviceSnapshot | null): DeviceReading[] {
-  if (!snapshot) return [];
-  const list = snapshot.devices.filter((d) => d.ok || d.present);
-  return list.length > 0 ? list : snapshot.devices;
+  return snapshot?.online ?? [];
 }
 
 export default function App() {
@@ -121,8 +122,9 @@ export default function App() {
   );
 
   const cards = useMemo(() => visibleDevices(devices), [devices]);
-  const onlineCount = cards.filter((d) => d.ok).length;
-  const totalCount = cards.length;
+  const onlineCount = cards.length;
+  // Known devices, connected or not — the ratio still reports what dropped off.
+  const totalCount = devices?.devices.length ?? 0;
 
   return (
     <div className="flex h-full flex-col px-5 pt-5 pb-5">
