@@ -14,7 +14,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{
     AppHandle, Emitter, Manager, RunEvent, State, WebviewWindowBuilder, Window, WindowEvent, Wry,
 };
-use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_notification::{NotificationExt, PermissionState};
 use tauri_plugin_store::StoreExt;
 
 /// Window creation itself emits resize events; only resizes while ready count as minimize.
@@ -599,6 +599,21 @@ pub fn run() {
                     MacosLauncher::LaunchAgent,
                     Some(vec!["--minimized"]),
                 ))?;
+            }
+
+            // Bildirim izni yoksa iste; aksi halde `.show()` sessizce başarısız olur
+            // ve düşük pil uyarısı hiç görünmez.
+            {
+                let notifier = app.notification();
+                match notifier.permission_state() {
+                    Ok(PermissionState::Granted) => {}
+                    Ok(_) => {
+                        if let Err(err) = notifier.request_permission() {
+                            eprintln!("notification permission request failed: {err}");
+                        }
+                    }
+                    Err(err) => eprintln!("notification permission state unavailable: {err}"),
+                }
             }
 
             let mut device_items = Vec::with_capacity(TRAY_DEVICE_SLOTS);
