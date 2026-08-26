@@ -135,7 +135,7 @@ pub fn read_all() -> Vec<DeviceReading> {
                     reading = Some(DeviceReading::ok(
                         Brand::classify("", &device.name),
                         device.name.clone(),
-                        "HID",
+                        hid::transport_label(info),
                         percent,
                         false,
                     ));

@@ -211,7 +211,8 @@ pub fn read_all() -> Vec<DeviceReading> {
 
             if let Some((percent, charging)) = reading {
                 let brand = Brand::classify(&mfr, &product);
-                out.push(DeviceReading::ok(brand, product, "HID", percent, charging));
+                let transport = hid::transport_label(info);
+                out.push(DeviceReading::ok(brand, product, transport, percent, charging));
             }
         }
         out

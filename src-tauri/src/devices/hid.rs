@@ -6,7 +6,7 @@
 //!   AJAZZ 2.4G 8K                       VID=0x3151 PID=0x5007
 //!   soundcore Select 4 Go              (Bluetooth name match)
 
-use hidapi::{HidApi, HidResult};
+use hidapi::{BusType, DeviceInfo, HidApi, HidResult};
 use std::sync::{Mutex, OnceLock};
 
 // ---------------------------------------------------------------------------
@@ -60,6 +60,33 @@ pub const SOUNDCORE_NAME_HINTS: &[&str] = &[
     "anker sound",
     "anker",
 ];
+
+/// Strings a receiver puts in its USB descriptor. A 2.4 GHz dongle is an
+/// ordinary USB device to Windows, so the bus alone cannot separate it from a
+/// cable — only the receiver's own name can.
+const RECEIVER_HINTS: &[&str] = &["2.4g", "2.4 g", "receiver", "dongle"];
+
+/// What to show as the link for a device the generic readers picked up.
+///
+/// Bluetooth is decided by the bus (Windows reports it through the compatible
+/// IDs); everything else is USB-rooted, where a receiver is recognised by name
+/// and anything unrecognised keeps the old neutral label.
+pub fn transport_label(info: &DeviceInfo) -> &'static str {
+    if matches!(info.bus_type(), BusType::Bluetooth) {
+        return "Bluetooth";
+    }
+    let name = format!(
+        "{} {}",
+        info.manufacturer_string().unwrap_or_default(),
+        info.product_string().unwrap_or_default()
+    )
+    .to_ascii_lowercase();
+    if RECEIVER_HINTS.iter().any(|hint| name.contains(hint)) {
+        "2.4 GHz"
+    } else {
+        "HID"
+    }
+}
 
 fn hid_context() -> &'static Mutex<Option<HidApi>> {
     static CONTEXT: OnceLock<Mutex<Option<HidApi>>> = OnceLock::new();
