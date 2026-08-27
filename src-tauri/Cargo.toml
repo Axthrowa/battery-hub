@@ -1,6 +1,6 @@
 [package]
 name = "battery-hub"
-version = "0.1.0"
+version = "0.2.0"
 description = "Battery Hub — multi-brand wireless battery monitor (Razer, Logitech, Ajazz, Soundcore)"
 authors = ["Axthrowa"]
 edition = "2021"

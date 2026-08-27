@@ -2,7 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !define APP        "Battery Hub"
 !define PUBLISHER  "Axthrowa"
-!define VERSION    "0.1.0"
+!define VERSION    "0.2.0"
 !define EXE        "battery-hub.exe"
 !define AUMID      "com.axthrowa.battery-hub"
 !define REGKEY     "Software\Microsoft\Windows\CurrentVersion\Uninstall\Battery Hub"
@@ -12,7 +12,7 @@ InstallDir "$LOCALAPPDATA\${APP}"
 InstallDirRegKey HKCU "Software\${APP}" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-VIProductVersion "0.1.0.0"
+VIProductVersion "0.2.0.0"
 VIAddVersionKey "ProductName"     "${APP}"
 VIAddVersionKey "CompanyName"     "${PUBLISHER}"
 VIAddVersionKey "LegalCopyright"  "Copyright (c) ${PUBLISHER}"
