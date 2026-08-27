@@ -115,6 +115,51 @@ SmartScreen scores publisher reputation, not the mere presence of a signature.
 For distribution, use an OV/EV certificate from a public CA — an EV certificate
 is what clears SmartScreen from day one.
 
+## Building with Smart App Control on
+
+Smart App Control blocks unsigned executables, and it blocks them during the
+build too: `cargo build` on Windows dies partway through because the build
+scripts it compiles (`serde_json`, `camino`, …) and the proc-macro DLLs it loads
+are themselves unsigned and brand new. SAC has no allowlist, exclusions do not
+apply to it, and it can only ever be turned off — never back on.
+
+Signing clears it. A self-signed certificate is enough **on the machine that
+trusts it**: import the certificate into `Cert:\CurrentUser\Root` and
+`Cert:\CurrentUser\TrustedPublisher`, and SAC lets the signed binary run.
+
+Build where SAC is not enforcing — WSL cross-compiles to Windows — then sign:
+
+```bash
+# WSL, from src-tauri/
+cargo build --release --target x86_64-pc-windows-gnu \
+            --bin battery-hub --features tauri/custom-protocol
+```
+
+```powershell
+scripts\sign-portable.ps1 -ExePath ...\battery-hub.exe
+```
+
+Two things that are easy to get wrong here:
+
+- **`--features tauri/custom-protocol` is not optional.** Without it the binary
+  serves the UI from `devUrl` instead of the assets compiled into it, and the
+  window opens on "this page can't be reached". `npm run tauri:build` passes the
+  feature for you; a bare `cargo build` does not.
+- The GNU target cannot link the `cdylib`, so build the `--bin` target on its
+  own, and copy `WebView2Loader.dll` from the target directory next to the exe.
+
+## Probing a device without building anything
+
+`scripts/hid-probe.py` reads HID devices through Windows' own signed
+`hid.dll` / `setupapi.dll` via ctypes. It loads no native code of its own, so it
+runs under Smart App Control as-is — useful precisely when a freshly compiled
+probe would be blocked.
+
+```powershell
+python scripts\hid-probe.py --list   # every HID collection, with report sizes
+python scripts\hid-probe.py          # the Aula battery + uuid frame
+```
+
 ## Optional: restart when the receiver is re-plugged
 
 ```powershell

@@ -41,10 +41,14 @@ const REPORT_ID: u8 = 0x13;
 const PAYLOAD_LEN: usize = 19;
 const CMD_BATTERY: u8 = 0x4A;
 const CMD_UUID: u8 = 0x05;
-/// The receiver drops a frame now and then when queries arrive back to back.
-const RETRIES: u32 = 4;
-const REPLY_WINDOW: Duration = Duration::from_millis(400);
-const RETRY_GAP: Duration = Duration::from_millis(60);
+/// The receiver stays quiet through the first frame after the app opens it —
+/// the 2.4 GHz link has to be woken before the keyboard is reachable — and it
+/// drops the odd frame when queries arrive back to back. Both recover on a
+/// retry, so the budget is generous rather than the poll reporting a keyboard
+/// that is sitting right there switched on.
+const RETRIES: u32 = 5;
+const REPLY_WINDOW: Duration = Duration::from_millis(350);
+const RETRY_GAP: Duration = Duration::from_millis(100);
 const READ_SLICE_MS: i32 = 50;
 
 /// The 2.4 GHz receiver reports one generic product string for every keyboard
@@ -95,6 +99,8 @@ fn ask(dev: &HidDevice, command: &[u8], marker: u8) -> Option<Vec<u8>> {
     out.extend_from_slice(&payload);
 
     let mut seen = 0usize;
+    let mut errors = 0usize;
+    let mut empties = 0usize;
     for attempt in 0..RETRIES {
         if attempt > 0 {
             thread::sleep(RETRY_GAP);
@@ -108,10 +114,15 @@ fn ask(dev: &HidDevice, command: &[u8], marker: u8) -> Option<Vec<u8>> {
             let mut buf = [0u8; 64];
             // A read error here is the endpoint having nothing yet, not the
             // device refusing — keep waiting out the window.
-            let Ok(read) = dev.read_timeout(&mut buf, READ_SLICE_MS) else {
-                continue;
+            let read = match dev.read_timeout(&mut buf, READ_SLICE_MS) {
+                Ok(read) => read,
+                Err(_) => {
+                    errors += 1;
+                    continue;
+                }
             };
             if read == 0 {
+                empties += 1;
                 continue;
             }
             seen += 1;
@@ -133,7 +144,7 @@ fn ask(dev: &HidDevice, command: &[u8], marker: u8) -> Option<Vec<u8>> {
         }
     }
     diagnostics::emit_line(&format!(
-        "[aula] no reply to 0x{marker:02X} after {RETRIES} tries ({seen} unrelated report(s))"
+        "[aula] no reply to 0x{marker:02X} after {RETRIES} tries          ({seen} report(s), {empties} empty, {errors} error(s))"
     ));
     None
 }
@@ -224,11 +235,12 @@ pub fn read_all() -> Vec<DeviceReading> {
                             .ranked(RANK_VENDOR),
                     );
                 }
+                // A silent link is normal for one poll after the app starts.
                 None => out.push(DeviceReading::failed(
                     Brand::aula(),
                     cached_label(info),
                     transport,
-                    "Aula receiver found but the keyboard did not answer (is it switched on?).",
+                    "Aula receiver found; waiting for the keyboard to answer.",
                     true,
                 )),
             }
