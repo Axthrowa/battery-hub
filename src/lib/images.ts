@@ -47,8 +47,61 @@ export function useCardImages() {
   };
 }
 
-/** Centre-crop to the frame's shape, scale to its size, re-encode as JPEG. */
-export async function toCroppedDataUri(file: File, target: ImageTarget): Promise<string> {
+/**
+ * Where the picture sits inside the frame, in frame units.
+ *
+ * `zoom` is a multiple of the smallest size that still covers the frame, so 1
+ * is "no empty corners" and anything above it is closer in. `x` and `y` are
+ * the top-left of the drawn picture relative to the frame's top-left, which
+ * are negative whenever the picture is larger than the frame — which, at zoom
+ * 1 or more, it always is.
+ */
+export interface Crop {
+  zoom: number;
+  x: number;
+  y: number;
+}
+
+/** The size at which the picture just covers the frame. */
+export function coverScale(image: { width: number; height: number }, target: ImageTarget): number {
+  return Math.max(target.width / image.width, target.height / image.height);
+}
+
+/** Centred, and no more zoomed in than it has to be. */
+export function centredCrop(
+  image: { width: number; height: number },
+  target: ImageTarget,
+): Crop {
+  const base = coverScale(image, target);
+  return {
+    zoom: 1,
+    x: (target.width - image.width * base) / 2,
+    y: (target.height - image.height * base) / 2,
+  };
+}
+
+/** Hold the picture against the frame's edges: never a gap, never a stray pan. */
+export function clampCrop(
+  crop: Crop,
+  image: { width: number; height: number },
+  target: ImageTarget,
+): Crop {
+  const scale = coverScale(image, target) * crop.zoom;
+  const width = image.width * scale;
+  const height = image.height * scale;
+  return {
+    zoom: crop.zoom,
+    x: Math.min(0, Math.max(target.width - width, crop.x)),
+    y: Math.min(0, Math.max(target.height - height, crop.y)),
+  };
+}
+
+/** Draw the chosen part of the picture at the frame's real size. */
+export async function renderCrop(
+  file: File,
+  target: ImageTarget,
+  crop?: Crop,
+): Promise<string> {
   const bitmap = await createImageBitmap(file);
   try {
     const canvas = document.createElement("canvas");
@@ -57,19 +110,17 @@ export async function toCroppedDataUri(file: File, target: ImageTarget): Promise
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canvas unavailable");
 
-    // Cover: the larger of the two ratios leaves no gap on either axis.
-    const scale = Math.max(target.width / bitmap.width, target.height / bitmap.height);
-    const width = bitmap.width * scale;
-    const height = bitmap.height * scale;
-    ctx.drawImage(bitmap, (target.width - width) / 2, (target.height - height) / 2, width, height);
+    const placed = clampCrop(crop ?? centredCrop(bitmap, target), bitmap, target);
+    const scale = coverScale(bitmap, target) * placed.zoom;
+    ctx.drawImage(bitmap, placed.x, placed.y, bitmap.width * scale, bitmap.height * scale);
     return canvas.toDataURL("image/jpeg", QUALITY);
   } finally {
     bitmap.close();
   }
 }
 
-/** Open a picker and return the cropped image, or `null` if nothing was chosen. */
-export function pickImage(target: ImageTarget): Promise<string | null> {
+/** Open the OS picker and hand back the file, or `null` if nothing was chosen. */
+export function pickImageFile(): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
@@ -79,19 +130,9 @@ export function pickImage(target: ImageTarget): Promise<string | null> {
 
     const cleanup = () => input.remove();
     input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) {
-        cleanup();
-        resolve(null);
-        return;
-      }
-      toCroppedDataUri(file, target)
-        .then(resolve)
-        .catch((err) => {
-          console.error("image import failed", err);
-          resolve(null);
-        })
-        .finally(cleanup);
+      const file = input.files?.[0] ?? null;
+      cleanup();
+      resolve(file);
     };
     // A cancelled picker fires no event; drop the element on the next focus.
     window.addEventListener("focus", () => window.setTimeout(cleanup, 500), { once: true });

@@ -5,7 +5,9 @@ import { DeviceCard } from "./components/DeviceCard";
 import { SettingsModal } from "./components/SettingsModal";
 import { useSettings } from "./context/SettingsContext";
 import type { BatteryReading, DeviceReading, DeviceSnapshot } from "./lib/bridge";
-import { CARD_TARGET, pickImage, useCardImages } from "./lib/images";
+import { ImageCropModal } from "./components/ImageCropModal";
+import { CARD_TARGET, pickImageFile, useCardImages } from "./lib/images";
+import type { ImageTarget } from "./lib/images";
 import { pickLogoFile, useLogos } from "./lib/logos";
 import {
   EVENT_BATTERY,
@@ -50,6 +52,11 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [cropping, setCropping] = useState<{
+    file: File;
+    target: ImageTarget;
+    resolve: (uri: string | null) => void;
+  } | null>(null);
   const timeoutRef = useRef<number | null>(null);
 
   const applyReading = useCallback((value: BatteryReading | null) => {
@@ -123,12 +130,20 @@ export default function App() {
     [setLogo],
   );
 
+  // Pick, then place: every frame in the app goes through the same two steps,
+  // so the dialog lives here once and hands the result back to whoever asked.
+  const requestImage = useCallback(async (target: ImageTarget) => {
+    const file = await pickImageFile();
+    if (!file) return null;
+    return new Promise<string | null>((resolve) => setCropping({ file, target, resolve }));
+  }, []);
+
   const pickCardImage = useCallback(
     async (name: string) => {
-      const picture = await pickImage(CARD_TARGET);
+      const picture = await requestImage(CARD_TARGET);
       if (picture) await setCardImage(name, picture);
     },
-    [setCardImage],
+    [requestImage, setCardImage],
   );
 
   // A rename has to carry both pictures, or the card loses its backdrop the
@@ -213,7 +228,7 @@ export default function App() {
               image={cardImageFor(device.product)}
               onPickImage={() => void pickCardImage(device.product)}
               onClearImage={() => void clearCardImage(device.product)}
-              pickImageLabel={t("cardImage")}
+              pickImageLabel={`${t("cardImage")} · ${CARD_TARGET.width}×${CARD_TARGET.height}`}
               clearImageLabel={t("removeCardImage")}
             />
           ))}
@@ -268,7 +283,22 @@ export default function App() {
         </p>
       </div>
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        requestImage={requestImage}
+      />
+
+      {cropping ? (
+        <ImageCropModal
+          file={cropping.file}
+          target={cropping.target}
+          onDone={(uri) => {
+            cropping.resolve(uri);
+            setCropping(null);
+          }}
+        />
+      ) : null}
       <AddDeviceModal
         open={addOpen}
         onClose={() => setAddOpen(false)}

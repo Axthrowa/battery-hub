@@ -75,6 +75,10 @@ export const resources = {
       imageSet: "Seçili",
       cardImage: "Kart görseli",
       removeCardImage: "Kart görselini kaldır",
+      adjustImage: "Görseli ayarla",
+      cropHint: "Sürükleyerek konumlandır, kaydırıcıyla yakınlaştır",
+      zoom: "Yakınlaştır",
+      apply: "Uygula",
     },
   },
   en: {
@@ -153,6 +157,10 @@ export const resources = {
       imageSet: "Selected",
       cardImage: "Card image",
       removeCardImage: "Remove card image",
+      adjustImage: "Adjust image",
+      cropHint: "Drag to position, slide to zoom",
+      zoom: "Zoom",
+      apply: "Apply",
     },
   },
 } as const;

@@ -6,13 +6,15 @@ import type { Background, Locale } from "../i18n/resources";
 import { useSettings } from "../context/SettingsContext";
 import { setNotificationSoundFile, testNotificationSound } from "../lib/bridge";
 import type { SoundKind } from "../lib/bridge";
-import { BACKGROUND_TARGET, DEVICES_TARGET, pickImage } from "../lib/images";
+import { BACKGROUND_TARGET, DEVICES_TARGET } from "../lib/images";
 import type { ImageTarget } from "../lib/images";
 import type { Theme } from "../context/SettingsContext";
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
+  /** Pick a picture and place it in the frame — see `ImageCropModal`. */
+  requestImage: (target: ImageTarget) => Promise<string | null>;
 }
 
 const LOCALES: { id: Locale; labelKey: "turkish" | "english"; flag: string }[] = [
@@ -166,7 +168,7 @@ function Toggle({
   );
 }
 
-export function SettingsModal({ open, onClose }: SettingsModalProps) {
+export function SettingsModal({ open, onClose, requestImage }: SettingsModalProps) {
   const { t } = useTranslation();
   const { settings, update } = useSettings();
   const soundInput = useRef<HTMLInputElement>(null);
@@ -200,7 +202,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   };
 
   const chooseImage = async (target: ImageTarget, key: "backgroundImage" | "devicesImage") => {
-    const uri = await pickImage(target);
+    const uri = await requestImage(target);
     if (uri) await update({ [key]: uri });
   };
 

@@ -30,6 +30,11 @@ VIAddVersionKey "ProductVersion"  "${VERSION}"
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "Turkish"
 !insertmacro MUI_LANGUAGE "English"
+
+; Kept ASCII on purpose: the rest of this script is, and a mangled prompt is
+; worse than a plain one.
+LangString UninstData ${LANG_TURKISH} "Ayarlar, eklenen cihazlar, kart gorselleri ve bildirim sesleri de silinsin mi?$\r$\n$\r$\nHayir derseniz yeniden kurdugunuzda hepsi yerinde olur."
+LangString UninstData ${LANG_ENGLISH} "Also delete settings, added devices, card images and notification sounds?$\r$\n$\r$\nChoosing No keeps them for the next install."
 !macro StopRunning
   nsExec::Exec 'taskkill /IM ${EXE} /F'
   Pop $0
@@ -67,7 +72,29 @@ Section "Uninstall"
   Delete "$INSTDIR\onceki-${EXE}"
   Delete "$INSTDIR\WebView2Loader.dll"
   Delete "$INSTDIR\uninstall.exe"
+  ; Left behind by the PowerShell installer this one replaced.
+  Delete "$INSTDIR\Kur.cmd"
+  Delete "$INSTDIR\Kaldir.cmd"
+  Delete "$INSTDIR\install.ps1"
+  Delete "$INSTDIR\uninstall.ps1"
   Delete "$SMPROGRAMS\${APP}.lnk"
+
+  ; The settings, the taught devices, the pictures and the sounds are the
+  ; user's work, not the program's, and someone uninstalling to put a newer
+  ; build in its place does not want to set all of it up again. So it is asked
+  ; rather than assumed -- and in a silent uninstall, where nobody can be
+  ; asked, it is kept.
+  IfSilent KeepData
+  MessageBox MB_YESNO|MB_ICONQUESTION "$(UninstData)" IDNO KeepData
+    Delete "$INSTDIR\devices.json"
+    Delete "$INSTDIR\notification-full.wav"
+    Delete "$INSTDIR\notification-low.wav"
+    RMDir /r "$APPDATA\com.axthrowa.battery-hub"
+  KeepData:
+
+  ; Diagnostics are the program's own scribble, not the user's, so they go
+  ; either way -- and without this the folder can never be removed.
+  Delete "$INSTDIR\diagnostics.log"
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Classes\AppUserModelId\${AUMID}"
   DeleteRegKey HKCU "${REGKEY}"
