@@ -25,12 +25,33 @@ interface BrandLogoProps {
   clearLabel?: string;
 }
 
+// Artwork for a brand arrives with the app so a device that is recognised is
+// also dressed correctly the moment it is added — nothing to pick by hand.
+// Marks that are near-black in their brand colour are lifted to a light
+// neutral; on this panel the originals would be invisible.
 const KNOWN: Record<string, { color: string; src: string }> = {
   razer: { color: "#44d62c", src: "/brands/razer.svg" },
   logitech: { color: "#00b8fc", src: "/brands/logitech.svg" },
   ajazz: { color: "#d81e06", src: "/brands/ajazz.png" },
   soundcore: { color: "#00c2a8", src: "/brands/soundcore.svg" },
   anker: { color: "#00c2a8", src: "/brands/soundcore.svg" },
+  steelseries: { color: "#ff5200", src: "/brands/steelseries.svg" },
+  corsair: { color: "#e6e9ef", src: "/brands/corsair.svg" },
+  hyperx: { color: "#e21836", src: "/brands/hyperx.svg" },
+  asus: { color: "#e6e9ef", src: "/brands/asus.svg" },
+  sony: { color: "#ffffff", src: "/brands/sony.svg" },
+  samsung: { color: "#e6e9ef", src: "/brands/samsung.svg" },
+  apple: { color: "#e6e9ef", src: "/brands/apple.svg" },
+  xiaomi: { color: "#ff6900", src: "/brands/xiaomi.svg" },
+  huawei: { color: "#e6e9ef", src: "/brands/huawei.svg" },
+  jbl: { color: "#ff3300", src: "/brands/jbl.svg" },
+  bose: { color: "#e6e9ef", src: "/brands/bose.svg" },
+  hp: { color: "#0096d6", src: "/brands/hp.svg" },
+  dell: { color: "#007db8", src: "/brands/dell.svg" },
+  lenovo: { color: "#e2231a", src: "/brands/lenovo.svg" },
+  redragon: { color: "#e6e9ef", src: "/brands/redragon.svg" },
+  beats: { color: "#005571", src: "/brands/beats.svg" },
+  sennheiser: { color: "#e6e9ef", src: "/brands/sennheiser.svg" },
 };
 
 const FALLBACK = { color: "#8b9bb4", src: "/brands/generic.svg" };

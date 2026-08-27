@@ -41,6 +41,8 @@ export interface DeviceReading {
   productId: number;
   /** What the device is, for placeholder artwork. */
   kind: DeviceKind;
+  /** On the cable with nothing left to take. */
+  full: boolean;
   updatedAtMs: number;
 }
 

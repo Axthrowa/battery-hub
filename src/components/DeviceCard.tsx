@@ -2,6 +2,27 @@ import type { DeviceReading } from "../lib/bridge";
 import { BrandLogo, brandAccent } from "./BrandLogo";
 import { levelColor } from "./BatteryRing";
 
+/** Nothing left to take — the cable can come out. */
+function FullMark({ color, title }: { color: string; title?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="ml-1.5 h-6 w-6 shrink-0 self-center"
+      fill="none"
+      stroke={color}
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="img"
+      aria-label={title}
+    >
+      {title ? <title>{title}</title> : null}
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8 12.4 2.8 2.8L16.2 9.8" />
+    </svg>
+  );
+}
+
 /** Mains power, at the size of the percentage it sits next to. */
 function ChargingBolt({ color, title }: { color: string; title?: string }) {
   return (
@@ -22,6 +43,7 @@ interface DeviceCardProps {
   device: DeviceReading;
   index: number;
   chargingLabel: string;
+  fullLabel: string;
   offlineLabel: string;
   locale: string;
   logo?: string;
@@ -37,6 +59,7 @@ export function DeviceCard({
   device,
   index,
   chargingLabel,
+  fullLabel,
   offlineLabel,
   locale,
   logo,
@@ -116,7 +139,9 @@ export function DeviceCard({
             {online && percent !== null ? percent : "—"}
           </span>
           <span className="mt-1 ml-1 text-sm font-medium text-neutral-500">%</span>
-          {online && device.charging ? (
+          {online && device.full ? (
+            <FullMark color={color} title={fullLabel} />
+          ) : online && device.charging ? (
             <ChargingBolt color={color} title={chargingLabel} />
           ) : null}
         </div>
@@ -127,9 +152,9 @@ export function DeviceCard({
           >
             {unverifiedLabel}
           </span>
-        ) : online && device.charging ? (
+        ) : online && (device.full || device.charging) ? (
           <span className="text-xs font-medium" style={{ color }}>
-            {chargingLabel}
+            {device.full ? fullLabel : chargingLabel}
           </span>
         ) : null}
       </div>

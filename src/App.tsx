@@ -161,6 +161,7 @@ export default function App() {
               device={device}
               index={index}
               chargingLabel={t("charging")}
+              fullLabel={t("fullyCharged")}
               offlineLabel={t("offline")}
               locale={settings.locale}
               logo={logoFor(device.product)}

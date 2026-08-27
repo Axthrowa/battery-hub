@@ -34,6 +34,13 @@ const ARG_SCAN_DEVICES: &str = "--scan-devices";
 const SHUTDOWN_GRACE_MS: u64 = 250;
 /// Per-device low-battery threshold (exclusive: notify when percent < this).
 const LOW_BATTERY_THRESHOLD: u8 = 20;
+/// Windows' own notification chime. The name is the bare one the toast
+/// builder parses — an `ms-winsoundevent:` URI does not match and is
+/// silently dropped, leaving the toast to whatever the system defaults to.
+const FULL_CHARGE_SOUND: &str = "Default";
+/// Close enough to full that a device dropping its charging flag means it has
+/// finished rather than been unplugged early.
+const FULL_ENOUGH: u8 = 95;
 
 const SETTINGS_STORE_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "settings";
@@ -72,6 +79,10 @@ struct Shared {
     shutting_down: AtomicBool,
     /// Product keys that already fired a low-battery toast.
     low_battery_notified: Mutex<HashSet<String>>,
+    /// Product keys that already fired a charge-complete toast.
+    full_charge_notified: Mutex<HashSet<String>>,
+    /// Product keys seen charging, so the end of it can be recognised.
+    charging_seen: Mutex<HashSet<String>>,
 }
 
 impl Shared {
@@ -93,6 +104,8 @@ impl Shared {
             exit_with_radio: AtomicBool::new(launched_for_dongle()),
             shutting_down: AtomicBool::new(false),
             low_battery_notified: Mutex::new(HashSet::new()),
+            full_charge_notified: Mutex::new(HashSet::new()),
+            charging_seen: Mutex::new(HashSet::new()),
         }
     }
 
@@ -279,6 +292,64 @@ fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
     }
 }
 
+/// Fires once per product when it finishes charging, and again only after it
+/// leaves the cable. Audible on purpose: the point of the toast is to say the
+/// device can be unplugged without anyone watching the panel for it.
+fn notify_full_charge(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapshot) {
+    let tr = shared.locale.lock().unwrap().starts_with("tr");
+    let mut notified = shared.full_charge_notified.lock().unwrap();
+    let mut charging = shared.charging_seen.lock().unwrap();
+    for device in &snapshot.devices {
+        let key = device.product.to_ascii_lowercase();
+        let Some(percent) = device.percent.filter(|_| device.ok) else {
+            continue;
+        };
+
+        // Two ways a device finishes. Some sit on the cable still calling
+        // themselves charging, which is `full`. Others simply drop the flag the
+        // moment they top out, and only the fact that they were charging a poll
+        // ago separates that from someone pulling the cable early.
+        let was_charging = charging.contains(&key);
+        let finished =
+            device.full || (was_charging && !device.charging && percent >= FULL_ENOUGH);
+        if device.charging {
+            charging.insert(key.clone());
+        }
+        if !finished {
+            if !device.charging && percent < FULL_ENOUGH {
+                notified.remove(&key);
+                charging.remove(&key);
+            }
+            continue;
+        }
+        if !notified.insert(key.clone()) {
+            continue;
+        }
+        let product = if device.product.trim().is_empty() {
+            device.brand_label.clone()
+        } else {
+            device.product.clone()
+        };
+        let (title, body) = if tr {
+            ("Şarj tamamlandı".to_string(), format!("{product} tam dolu"))
+        } else {
+            ("Charging complete".to_string(), format!("{product} is fully charged"))
+        };
+        devices::diagnostics::emit_line(&format!("[notify] {body}"));
+        if let Err(err) = app
+            .notification()
+            .builder()
+            .title(title)
+            .body(&body)
+            .sound(FULL_CHARGE_SOUND)
+            .show()
+        {
+            eprintln!("full-charge notification failed: {err}");
+            notified.remove(&key);
+        }
+    }
+}
+
 fn store_write(app: &AppHandle, key: &str, value: serde_json::Value) {
     match app.store(SESSION_STORE_FILE) {
         Ok(store) => {
@@ -393,7 +464,13 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>) {
                     "[poll] {} OK {}%{}{} ({}) {}",
                     d.brand.label(),
                     p,
-                    if d.charging { " CHARGING" } else { "" },
+                    if d.full {
+                        " FULL"
+                    } else if d.charging {
+                        " CHARGING"
+                    } else {
+                        ""
+                    },
                     if d.unverified { " UNVERIFIED" } else { "" },
                     d.transport,
                     d.product
@@ -411,6 +488,7 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>) {
         *shared.last_snapshot.lock().unwrap() = Some(snapshot.clone());
         apply_tray(&app, &shared);
         notify_low_battery(&app, &shared, &snapshot);
+        notify_full_charge(&app, &shared, &snapshot);
 
         if main_window_alive(&app) {
             let _ = app.emit(EVENT_BATTERY, &snapshot.primary);

@@ -63,6 +63,10 @@ pub struct DeviceReading {
     /// Keyboard, mouse, headset — what to draw when nobody has given the
     /// device artwork and its brand has no logo.
     pub kind: DeviceKind,
+    /// On the cable with nothing left to take. Devices keep reporting that they
+    /// are charging while they sit at full, so "charging" alone would leave a
+    /// finished device looking like it is still filling up.
+    pub full: bool,
     pub updated_at_ms: u64,
 }
 
@@ -81,6 +85,7 @@ impl DeviceReading {
             ok: true,
             percent: Some(percent.min(100)),
             charging,
+            full: charging && percent >= 100,
             transport: transport.into(),
             product: product.into(),
             error: None,
@@ -153,6 +158,7 @@ impl DeviceReading {
             ok: false,
             percent: None,
             charging: false,
+            full: false,
             transport: transport.into(),
             product: product.into(),
             error: Some(error.into()),
