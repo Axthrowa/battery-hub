@@ -14,6 +14,71 @@
   --font-display: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
 }
 
+/*
+ * Theme
+ *
+ * The accent is picked in settings and lands on <html> as `--bh-accent`; the
+ * theme decides what to do with it, because the same hex cannot serve both
+ * grounds. On the dark panel it is the fill and the text; on the light one it
+ * is darkened, or a pastel mint on white would be unreadable as text and
+ * unusable as a button.
+ *
+ * Everything else follows from four tokens. The panel is written for a dark
+ * ground — `white/10` means a faint overlay, `neutral-100` means the brightest
+ * text, `black/60` means a shadow — so the light theme redefines what those
+ * words resolve to rather than rewriting several hundred utility classes. The
+ * one exception is `--color-ink-950`, which is never a surface: it is the text
+ * on an accent-filled button, and so it has to move the opposite way.
+ */
+:root {
+  --color-accent: var(--bh-accent, #5eead4);
+  --bh-text-strong: #f3f5f7;
+  --bh-text-dim: #6b7280;
+  --bh-track: #1b1f24;
+  --bh-canvas-near: #0a0c10;
+  --bh-canvas-mid: #08090b;
+  --bh-canvas-far: #0c1014;
+  --bh-glow: 0.1;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --color-accent: color-mix(in oklab, var(--bh-accent, #5eead4) 68%, #0b0d10);
+  --color-ink-950: #ffffff;
+  --color-ink-900: #ffffff;
+  --color-ink-850: #ffffff;
+  --color-ink-800: #eef1f5;
+  --color-ink-700: #dde2e8;
+
+  --color-white: #0d1116;
+  --color-black: #64748b;
+
+  --color-neutral-50: #0b0e12;
+  --color-neutral-100: #151a20;
+  --color-neutral-200: #232a32;
+  --color-neutral-300: #39424c;
+  --color-neutral-400: #4e5865;
+  --color-neutral-500: #67717e;
+  --color-neutral-600: #7d8794;
+
+  /* The warning and error tones are chosen for a dark ground; on a white card
+     they land on their own 10% tint and go nearly invisible. Only the text
+     shades move — the 500s underneath them are still the right hue for a
+     border and a wash. */
+  --color-red-300: #b42318;
+  --color-amber-300: #a25a06;
+  --color-amber-400: #a25a06;
+
+  --bh-text-strong: #101419;
+  --bh-text-dim: #7d8794;
+  --bh-track: #dde2e8;
+  --bh-canvas-near: #f2f5f9;
+  --bh-canvas-mid: #e9edf3;
+  --bh-canvas-far: #f6f8fb;
+  --bh-glow: 0.22;
+  color-scheme: light;
+}
+
 @layer base {
   html,
   body,
@@ -24,10 +89,19 @@
 
   body {
     background:
-      radial-gradient(820px 420px at 12% -10%, rgba(94, 234, 212, 0.1), transparent 55%),
+      radial-gradient(
+        820px 420px at 12% -10%,
+        color-mix(in srgb, var(--color-accent) calc(var(--bh-glow) * 100%), transparent),
+        transparent 55%
+      ),
       radial-gradient(700px 380px at 92% 8%, rgba(68, 214, 44, 0.08), transparent 50%),
-      linear-gradient(165deg, #0a0c10 0%, #08090b 45%, #0c1014 100%);
-    color: #eef1f4;
+      linear-gradient(
+        165deg,
+        var(--bh-canvas-near) 0%,
+        var(--bh-canvas-mid) 45%,
+        var(--bh-canvas-far) 100%
+      );
+    color: var(--bh-text-strong);
     font-family: var(--font-display);
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
@@ -42,6 +116,25 @@
 @layer utilities {
   .drag-region {
     -webkit-app-region: drag;
+  }
+
+  /* The swatch shows the accent as this theme will actually use it, not the
+     hex that gets stored — on the light ground that hex is darkened before it
+     reaches anything, and a picker whose dots do not match what they produce
+     is worse than no picker. Keep the mix in step with `--color-accent`. */
+  .accent-swatch {
+    background-color: var(--swatch);
+  }
+
+  :root[data-theme="light"] .accent-swatch {
+    background-color: color-mix(in oklab, var(--swatch) 68%, #0b0d10);
+  }
+
+  /* The switch knob is white on both grounds — pale accent under it on the
+     dark panel, dark accent on the light one. It must not follow the flipped
+     `white` token, which would put a dark knob on a dark track. */
+  .peer:checked ~ .knob {
+    background-color: #fff;
   }
 
   .card-enter {

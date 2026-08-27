@@ -34,7 +34,7 @@ export function BatteryRing({ percent, charging, online, animated }: BatteryRing
           cy={SIZE / 2}
           r={RADIUS}
           fill="none"
-          stroke="#1b1f24"
+          stroke="var(--bh-track)"
           strokeWidth={STROKE}
         />
         <circle
@@ -58,7 +58,7 @@ export function BatteryRing({ percent, charging, online, animated }: BatteryRing
         <div className="flex items-start">
           <span
             className="text-6xl leading-none font-semibold tabular-nums tracking-tight"
-            style={{ color: online ? "#f3f5f7" : "#6b7280" }}
+            style={{ color: `var(${online ? "--bh-text-strong" : "--bh-text-dim"})` }}
           >
             {online && percent !== null ? value : "--"}
           </span>

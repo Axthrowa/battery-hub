@@ -123,9 +123,20 @@ scripts it compiles (`serde_json`, `camino`, …) and the proc-macro DLLs it loa
 are themselves unsigned and brand new. SAC has no allowlist, exclusions do not
 apply to it, and it can only ever be turned off — never back on.
 
-Signing clears it. A self-signed certificate is enough **on the machine that
-trusts it**: import the certificate into `Cert:\CurrentUser\Root` and
-`Cert:\CurrentUser\TrustedPublisher`, and SAC lets the signed binary run.
+Signing does **not** clear it, and no certificate store does either. SAC runs a
+fixed policy — `VerifiedAndReputableDesktop` — that consults Microsoft-anchored
+roots and its cloud reputation service, and never looks at the machine's own
+trust stores. A self-signed certificate validates at signing level 1 with
+`VerificationError = 18` whether it sits in `CurrentUser\Root`,
+`LocalMachine\Root`, or both; importing it into the machine stores was tried and
+changed nothing.
+
+What actually lets a fresh build through is the cloud verdict, and that takes a
+few minutes to arrive. Retry the launch every 30 seconds for up to twenty —
+each attempt on the *same* file, because a new binary restarts the clock, and
+rebuilding or re-signing between tries is why this looks like a permanent block
+when it is not. Sign anyway: the signature is what the reputation service ends
+up attaching its verdict to.
 
 Build where SAC is not enforcing — WSL cross-compiles to Windows — then sign:
 
@@ -163,11 +174,20 @@ Menu entry and the Add/Remove Programs entry, and drops `Kaldir.cmd` next to
 the binary for uninstalling. Neither script touches `devices.json` or the
 settings store.
 
-SAC decides per file hash and asks its cloud service first, so anything freshly
-signed is refused for a minute or two before it is allowed. Retrying every few
-seconds keeps hitting the same pending verdict and reads exactly like a
-permanent block — leave half a minute between attempts before concluding
-anything about a new binary.
+SAC asks its cloud service per file, so anything freshly built is refused until
+the verdict lands — observed at three to four minutes, and worth waiting twenty
+before concluding anything. Leave half a minute between attempts and keep them
+on one unchanged file.
+
+The block itself says nothing useful: `Start-Process` reports only "Application
+Control policy has blocked this file" (os error 4551). The reason is always in
+the event log, and event 3089 carries the signing level and the verification
+error that name it:
+
+```powershell
+Get-WinEvent -LogName 'Microsoft-Windows-CodeIntegrity/Operational' |
+  Where-Object { $_.Id -in 3033, 3077, 3089 }
+```
 
 ## Probing a device without building anything
 

@@ -9,16 +9,49 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { DEFAULT_ACCENT } from "../i18n/resources";
 import type { Locale } from "../i18n/resources";
-import { applyLocalization, isTauri, setPollSeconds } from "../lib/bridge";
+import {
+  applyLocalization,
+  isTauri,
+  setNotificationSound,
+  setPollSeconds,
+} from "../lib/bridge";
+
+/** `system` follows the Windows light/dark setting. */
+export type Theme = "system" | "dark" | "light";
 
 export interface Settings {
   locale: Locale;
   pollSeconds: number;
   autostart: boolean;
+  theme: Theme;
+  /** Hex from `ACCENTS`, or any colour previously stored. */
+  accent: string;
+  notificationSound: boolean;
 }
 
-const DEFAULTS: Settings = { locale: "tr", pollSeconds: 60, autostart: false };
+const DEFAULTS: Settings = {
+  locale: "tr",
+  pollSeconds: 60,
+  autostart: false,
+  theme: "dark",
+  accent: DEFAULT_ACCENT,
+  notificationSound: true,
+};
+
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+
+function prefersDark() {
+  return typeof window !== "undefined" && window.matchMedia(DARK_QUERY).matches;
+}
+
+/** Hand the theme to the document: CSS does the rest, keyed off `data-theme`. */
+function paint(theme: Theme, accent: string) {
+  const root = document.documentElement;
+  root.dataset.theme = theme === "system" ? (prefersDark() ? "dark" : "light") : theme;
+  root.style.setProperty("--bh-accent", accent);
+}
 const STORE_FILE = "settings.json";
 const STORE_KEY = "settings";
 
@@ -45,6 +78,15 @@ function sanitize(raw: unknown): Settings {
         ? Math.min(3600, Math.round(value.pollSeconds))
         : DEFAULTS.pollSeconds,
     autostart: Boolean(value.autostart),
+    theme:
+      value.theme === "light" || value.theme === "system" || value.theme === "dark"
+        ? value.theme
+        : DEFAULTS.theme,
+    accent:
+      typeof value.accent === "string" && /^#[0-9a-fA-F]{6}$/.test(value.accent)
+        ? value.accent
+        : DEFAULTS.accent,
+    notificationSound: value.notificationSound !== false,
   };
 }
 
@@ -112,6 +154,27 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     void i18n.changeLanguage(settings.locale);
     void setPollSeconds(settings.pollSeconds);
   }, [ready, settings.locale, settings.pollSeconds, i18n]);
+
+  // The toasts come from Rust, so the switch has to reach it: the store is only
+  // read at launch, and a setting that needs a restart is not a setting.
+  useEffect(() => {
+    if (!ready) return;
+    void setNotificationSound(settings.notificationSound);
+  }, [ready, settings.notificationSound]);
+
+  // Painted before `ready` too, so the first frame is not the wrong theme.
+  useEffect(() => {
+    paint(settings.theme, settings.accent);
+  }, [settings.theme, settings.accent]);
+
+  // Only `system` cares what Windows is doing.
+  useEffect(() => {
+    if (settings.theme !== "system") return;
+    const media = window.matchMedia(DARK_QUERY);
+    const onChange = () => paint("system", settings.accent);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [settings.theme, settings.accent]);
 
   useEffect(() => {
     if (!ready) return;

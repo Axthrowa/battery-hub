@@ -75,6 +75,9 @@ export const lastReading = () => safeInvoke<BatteryReading | null>("last_reading
 export const lastDevices = () => safeInvoke<DeviceSnapshot | null>("last_devices");
 export const requestRefresh = () => safeInvoke<void>("refresh_now");
 export const setPollSeconds = (seconds: number) => safeInvoke<void>("set_poll_seconds", { seconds });
+/** Whether the toasts Rust raises are allowed to make a sound. */
+export const setNotificationSound = (enabled: boolean) =>
+  safeInvoke<void>("set_notification_sound", { enabled });
 export const hideToTray = () => safeInvoke<void>("close_to_tray");
 export const closeToTray = () => safeInvoke<void>("close_to_tray");
 export const quitApp = () => safeInvoke<void>("quit_app");

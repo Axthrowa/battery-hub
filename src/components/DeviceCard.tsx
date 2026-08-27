@@ -134,7 +134,7 @@ export function DeviceCard({
         <div className="flex items-start">
           <span
             className="text-3xl leading-none font-semibold tabular-nums tracking-tight"
-            style={{ color: online ? "#f3f5f7" : "#6b7280" }}
+            style={{ color: `var(${online ? "--bh-text-strong" : "--bh-text-dim"})` }}
           >
             {online && percent !== null ? percent : "—"}
           </span>
@@ -159,7 +159,7 @@ export function DeviceCard({
         ) : null}
       </div>
 
-      <div className="h-1.5 overflow-hidden rounded-full bg-ink-700">
+      <div className="h-1.5 overflow-hidden rounded-full" style={{ backgroundColor: "var(--bh-track)" }}>
         <div
           className="h-full rounded-full transition-[width,background-color] duration-700 ease-out"
           style={{ width: `${barWidth}%`, backgroundColor: color }}

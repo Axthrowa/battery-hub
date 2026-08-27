@@ -92,9 +92,13 @@ fn model_cache() -> &'static Mutex<HashMap<(u16, u16), String>> {
 /// last real answer is served instead, stamped with when it was measured.
 const READING_TTL: Duration = Duration::from_secs(5 * 60);
 
+/// The level only — never the charging flag that came with it. Pulling the
+/// cable is one of the commonest reasons a keyboard drops a frame, so a cached
+/// "charging" is wrong at exactly the moment it gets served: the bolt and the
+/// finished-charge mark would sit there for the whole five minutes after the
+/// cable came out. A level survives a dropped frame unchanged; a flag does not.
 struct LastReading {
     percent: u8,
-    charging: bool,
     at_ms: u64,
 }
 
@@ -302,7 +306,6 @@ pub fn read_all() -> Vec<DeviceReading> {
                             ids,
                             LastReading {
                                 percent,
-                                charging,
                                 at_ms: now_ms(),
                             },
                         );
@@ -318,11 +321,8 @@ pub fn read_all() -> Vec<DeviceReading> {
                     let recent = reading_cache().lock().ok().and_then(|cache| {
                         cache.get(&ids).and_then(|last| {
                             let age = now_ms().saturating_sub(last.at_ms);
-                            (age < READING_TTL.as_millis() as u64).then_some((
-                                last.percent,
-                                last.charging,
-                                last.at_ms,
-                            ))
+                            (age < READING_TTL.as_millis() as u64)
+                                .then_some((last.percent, false, last.at_ms))
                         })
                     });
                     match recent {

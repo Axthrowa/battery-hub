@@ -37,10 +37,12 @@ const ARG_SCAN_DEVICES: &str = "--scan-devices";
 const SHUTDOWN_GRACE_MS: u64 = 250;
 /// Per-device low-battery threshold (exclusive: notify when percent < this).
 const LOW_BATTERY_THRESHOLD: u8 = 20;
-/// Windows' own notification chime. The name is the bare one the toast
-/// builder parses — an `ms-winsoundevent:` URI does not match and is
-/// silently dropped, leaving the toast to whatever the system defaults to.
-const FULL_CHARGE_SOUND: &str = "Default";
+/// Windows' own notification chime. The name is the bare one the toast builder
+/// parses — an `ms-winsoundevent:` URI does not match and is silently dropped.
+/// Naming no sound at all is not the same thing: a toast built without one is
+/// emitted with `<audio silent="true" />`, which is how the sound switch in
+/// settings turns toasts quiet without hiding them.
+const NOTIFICATION_SOUND: &str = "Default";
 /// Close enough to full that a device dropping its charging flag means it has
 /// finished rather than been unplugged early.
 const FULL_ENOUGH: u8 = 95;
@@ -49,11 +51,104 @@ const FULL_ENOUGH: u8 = 95;
 /// claim the last point — it charges to full and simply says 99 until the cable
 /// comes out, at which point it settles back to what the cell really holds.
 const FULL_STALL_MS: u64 = 15 * 60 * 1000;
+/// How long a charging claim that has not yet been seen to gain a single point
+/// may stand on nothing but its own word. A charge that is really happening
+/// moves the gauge inside this: a mouse filling from empty gains a point every
+/// minute or two. A receiver repeating a frame it heard an hour ago does not.
+const CHARGE_GRACE_MS: u64 = 3 * 60 * 1000;
+/// How long a charge that HAS been seen to climb may then sit still, short of
+/// full, before it is treated as over rather than ongoing.
+const CHARGE_STALL_MS: u64 = 10 * 60 * 1000;
+/// How far the level may fall below the peak before the fall counts as real
+/// rather than as gauge jitter. One point of wobble is ordinary on a gauge read
+/// off the cell voltage; two in a row is the battery going down.
+const CHARGE_DROP_TOLERANCE: u8 = 2;
 
-/// Highest level a device reached while on the cable, and when it got there.
+/// What has been seen of one device's charge.
 struct ChargeWatch {
+    /// Highest level reached since the claim began, and when it got there.
     peak: u8,
     since_ms: u64,
+    /// The level has been seen to rise while the claim stood — the one piece of
+    /// evidence that separates a charge from a flag with nothing behind it.
+    climbed: bool,
+    /// The claim stopped being believed — see `judge_charge`.
+    stale: bool,
+}
+
+/// What a device claiming the cable is actually doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Charge {
+    /// On the cable and still taking a charge.
+    Filling,
+    /// On the cable with nothing left to take.
+    Full,
+    /// Says it is on the cable, but the level has not moved in long enough that
+    /// the flag is no longer evidence of anything.
+    Disbelieved,
+}
+
+/// Judge one device's charging claim against what has been seen of its level.
+///
+/// Split out from `apply_charge_state` because this is the whole of the
+/// decision and none of the plumbing: no app handle, no toasts, no snapshot —
+/// just the watch, the level and the clock, so it can be tested directly.
+///
+/// The claim by itself is worth very little. An Ajazz receiver serves the last
+/// frame it heard, so it went on reporting "92%, charging" for a quarter of an
+/// hour with the mouse on the desk — and over the hours before that the level
+/// it reported walked *down*, 95 to 94 to 93 to 92, the whole time still
+/// claiming the cable. So the level is the evidence and the flag is only the
+/// question: a charge that is happening gains points, and one that is losing
+/// them is not happening at all.
+fn judge_charge(watch: &mut ChargeWatch, percent: u8, now: u64) -> Charge {
+    if percent > watch.peak {
+        // It gained: the flag belongs to a charge that is really under way.
+        watch.peak = percent;
+        watch.since_ms = now;
+        watch.climbed = true;
+        watch.stale = false;
+    } else if watch.peak - percent >= CHARGE_DROP_TOLERANCE {
+        // It lost charge while claiming the cable, which nothing on a charger
+        // does. There is no waiting period for this one because there is
+        // nothing left to wait for. The peak follows the level down so that a
+        // charge starting later reads as a gain on the very next poll.
+        watch.peak = percent;
+        watch.since_ms = now;
+        watch.stale = true;
+    }
+
+    let waited = now.saturating_sub(watch.since_ms);
+    // A level that has stopped moving means one of two things, and which one
+    // depends on whether it was ever seen to move at all: at the top of a gauge
+    // that did climb, the charge is finished; anywhere else, the flag never had
+    // anything behind it.
+    let near_done = watch.climbed && percent >= FULL_ENOUGH;
+    let patience = if watch.climbed {
+        CHARGE_STALL_MS
+    } else {
+        CHARGE_GRACE_MS
+    };
+    if !near_done && waited >= patience {
+        watch.stale = true;
+    }
+
+    if percent >= 100 {
+        Charge::Full
+    } else if watch.stale {
+        Charge::Disbelieved
+    } else if near_done && waited >= FULL_STALL_MS {
+        Charge::Full
+    } else {
+        Charge::Filling
+    }
+}
+
+/// Whether the flag going out means a charge just completed. A watch that was
+/// never believed, or never saw the level rise, announces nothing: there is no
+/// evidence a charge was happening, so there is none that one finished.
+fn completed_on_unplug(watch: &ChargeWatch) -> bool {
+    watch.climbed && !watch.stale && watch.peak >= FULL_ENOUGH
 }
 
 const SETTINGS_STORE_FILE: &str = "settings.json";
@@ -93,6 +188,9 @@ struct Shared {
     /// Cleared as soon as the user opens the app by hand — see `launched_for_dongle`.
     exit_with_radio: AtomicBool,
     shutting_down: AtomicBool,
+    /// Whether toasts are allowed to make a sound. Off leaves them visible but
+    /// silent — Windows plays nothing at all when a toast names no sound.
+    notify_sound: AtomicBool,
     /// Product keys that already fired a low-battery toast.
     low_battery_notified: Mutex<HashSet<String>>,
     /// Product keys that already fired a charge-complete toast.
@@ -120,6 +218,7 @@ impl Shared {
             dongle_misses: AtomicU32::new(0),
             exit_with_radio: AtomicBool::new(launched_for_dongle()),
             shutting_down: AtomicBool::new(false),
+            notify_sound: AtomicBool::new(true),
             low_battery_notified: Mutex::new(HashSet::new()),
             full_charge_notified: Mutex::new(HashSet::new()),
             charge_watch: Mutex::new(HashMap::new()),
@@ -357,13 +456,11 @@ fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
             device.product.clone()
         };
         let body = format!("{product} low battery");
-        match app
-            .notification()
-            .builder()
-            .title("Battery Hub")
-            .body(&body)
-            .show()
-        {
+        let mut toast = app.notification().builder().title("Battery Hub").body(&body);
+        if shared.notify_sound.load(Ordering::Relaxed) {
+            toast = toast.sound(NOTIFICATION_SOUND);
+        }
+        match toast.show() {
             Ok(()) => {
                 devices::diagnostics::emit_line(&format!("[notify] sent: {body} ({percent}%)"))
             }
@@ -379,11 +476,18 @@ fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
 /// is over.
 ///
 /// Readers only report the flag the hardware sets, and hardware is unhelpful
-/// here in two different ways. Some devices sit at 100% still calling
+/// here in three different ways. Some devices sit at 100% still calling
 /// themselves charging. Others read their level off the cell voltage, top out
 /// at 99 and never move again — the charge is done, the number just cannot say
-/// so until the cable comes out and the reading settles back. Both are
-/// recognised by watching the level stop climbing.
+/// so until the cable comes out and the reading settles back. And a 2.4 GHz
+/// receiver keeps serving the last frame it heard from a device that has since
+/// gone off the air, so a charging bit set during some earlier moment on the
+/// dock is repeated for hours after the device is back on the desk.
+///
+/// All three are recognised the same way: by watching whether the level moves.
+/// A charge that is really happening gains points. One that claims the cable
+/// and has not gained a point in ten minutes, while nowhere near full, is not
+/// describing this moment and is not shown as charging.
 fn apply_charge_state(app: &AppHandle, shared: &Shared, snapshot: &mut DeviceSnapshot) {
     let now = now_ms();
     let mut watch = shared.charge_watch.lock().unwrap();
@@ -399,15 +503,19 @@ fn apply_charge_state(app: &AppHandle, shared: &Shared, snapshot: &mut DeviceSna
             let entry = watch.entry(key.clone()).or_insert(ChargeWatch {
                 peak: percent,
                 since_ms: now,
+                climbed: false,
+                stale: false,
             });
-            if percent > entry.peak {
-                entry.peak = percent;
-                entry.since_ms = now;
-            }
-            let stalled = now.saturating_sub(entry.since_ms) >= FULL_STALL_MS;
-            device.full = percent >= 100 || (percent >= FULL_ENOUGH && stalled);
-            if device.full {
-                finished.push(key);
+            match judge_charge(entry, percent, now) {
+                Charge::Full => {
+                    device.full = true;
+                    finished.push(key);
+                }
+                Charge::Filling => device.full = false,
+                Charge::Disbelieved => {
+                    device.charging = false;
+                    device.full = false;
+                }
             }
         } else {
             device.full = false;
@@ -415,7 +523,7 @@ fn apply_charge_state(app: &AppHandle, shared: &Shared, snapshot: &mut DeviceSna
             // The level itself is no use at this moment — a voltage gauge drops
             // the instant the charger stops holding it up.
             if let Some(previous) = watch.remove(&key) {
-                if previous.peak >= FULL_ENOUGH {
+                if completed_on_unplug(&previous) {
                     finished.push(key);
                 }
             }
@@ -424,8 +532,11 @@ fn apply_charge_state(app: &AppHandle, shared: &Shared, snapshot: &mut DeviceSna
     drop(watch);
 
     snapshot.online = snapshot.devices.iter().filter(|d| d.ok).cloned().collect();
+    // Devices that have finished stay on the fast cadence rather than dropping
+    // to the idle one: a finished charge is precisely the state someone is
+    // waiting to see end, and the cable coming out is what ends it.
     shared.charging.store(
-        snapshot.devices.iter().any(|d| d.charging && !d.full),
+        snapshot.devices.iter().any(|d| d.charging),
         Ordering::Release,
     );
     notify_full_charge(app, shared, snapshot, &finished);
@@ -476,14 +587,11 @@ fn notify_full_charge(
                 format!("{product} is fully charged"),
             )
         };
-        match app
-            .notification()
-            .builder()
-            .title(title)
-            .body(&body)
-            .sound(FULL_CHARGE_SOUND)
-            .show()
-        {
+        let mut toast = app.notification().builder().title(title).body(&body);
+        if shared.notify_sound.load(Ordering::Relaxed) {
+            toast = toast.sound(NOTIFICATION_SOUND);
+        }
+        match toast.show() {
             Ok(()) => devices::diagnostics::emit_line(&format!("[notify] sent: {body}")),
             Err(err) => {
                 devices::diagnostics::emit_line(&format!("[notify] FAILED: {body} — {err}"));
@@ -519,6 +627,9 @@ fn load_settings_from_store(app: &AppHandle, shared: &Shared) {
         shared
             .poll_seconds
             .store(seconds.clamp(MIN_POLL_SECONDS, 3600), Ordering::Relaxed);
+    }
+    if let Some(on) = value.get("notificationSound").and_then(|v| v.as_bool()) {
+        shared.notify_sound.store(on, Ordering::Relaxed);
     }
 }
 
@@ -753,6 +864,11 @@ fn set_poll_seconds(state: State<'_, Arc<Shared>>, seconds: u64) {
 }
 
 #[tauri::command]
+fn set_notification_sound(state: State<'_, Arc<Shared>>, enabled: bool) {
+    state.notify_sound.store(enabled, Ordering::Relaxed);
+}
+
+#[tauri::command]
 fn apply_localization(
     app: AppHandle,
     state: State<'_, Arc<Shared>>,
@@ -837,6 +953,7 @@ pub fn run() {
             last_devices,
             refresh_now,
             set_poll_seconds,
+            set_notification_sound,
             apply_localization,
             close_to_tray,
             quit_app,
@@ -1002,4 +1119,151 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINUTE: u64 = 60 * 1000;
+
+    fn watch_at(percent: u8, now: u64) -> ChargeWatch {
+        ChargeWatch {
+            peak: percent,
+            since_ms: now,
+            climbed: false,
+            stale: false,
+        }
+    }
+
+    #[test]
+    fn a_charge_that_climbs_keeps_its_flag() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(60, start);
+        for (minute, percent) in [(2u64, 61u8), (4, 62), (7, 63), (30, 70)] {
+            let now = start + minute * MINUTE;
+            assert_eq!(judge_charge(&mut watch, percent, now), Charge::Filling);
+        }
+        assert!(watch.climbed);
+    }
+
+    /// The Ajazz case, from its own log: the receiver repeated "92%, charging"
+    /// for a quarter of an hour with the mouse on the desk.
+    #[test]
+    fn a_claim_that_never_gains_a_point_stops_being_believed() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(92, start);
+        assert_eq!(judge_charge(&mut watch, 92, start + MINUTE), Charge::Filling);
+        assert_eq!(
+            judge_charge(&mut watch, 92, start + CHARGE_GRACE_MS),
+            Charge::Disbelieved
+        );
+        // And stays disbelieved rather than flapping back a window later.
+        assert_eq!(
+            judge_charge(&mut watch, 92, start + 5 * CHARGE_GRACE_MS),
+            Charge::Disbelieved
+        );
+    }
+
+    /// Also from the log: 95 → 94 → 93 → 92, claiming the cable throughout.
+    /// Nothing on a charger loses charge, so this needs no waiting period.
+    #[test]
+    fn a_level_falling_under_the_claim_ends_it_at_once() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(95, start);
+        assert_eq!(judge_charge(&mut watch, 95, start + MINUTE), Charge::Filling);
+        assert_eq!(
+            judge_charge(&mut watch, 93, start + 2 * MINUTE),
+            Charge::Disbelieved
+        );
+    }
+
+    /// One point of wobble is ordinary on a gauge read off the cell voltage.
+    #[test]
+    fn a_single_point_of_wobble_is_not_a_fall() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(60, start);
+        assert_eq!(judge_charge(&mut watch, 61, start + MINUTE), Charge::Filling);
+        assert_eq!(
+            judge_charge(&mut watch, 60, start + 2 * MINUTE),
+            Charge::Filling
+        );
+    }
+
+    #[test]
+    fn a_disbelieved_claim_is_taken_back_once_the_level_gains() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(80, start);
+        assert_eq!(
+            judge_charge(&mut watch, 80, start + CHARGE_GRACE_MS),
+            Charge::Disbelieved
+        );
+        let moved = start + CHARGE_GRACE_MS + MINUTE;
+        assert_eq!(judge_charge(&mut watch, 81, moved), Charge::Filling);
+    }
+
+    /// A device that drained while the flag was stuck on must not need to climb
+    /// all the way back to the old peak before a real charge is believed.
+    #[test]
+    fn a_charge_after_a_drain_is_believed_from_the_new_level() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(95, start);
+        assert_eq!(
+            judge_charge(&mut watch, 88, start + MINUTE),
+            Charge::Disbelieved
+        );
+        assert_eq!(watch.peak, 88, "the peak follows the level down");
+        assert_eq!(
+            judge_charge(&mut watch, 89, start + 2 * MINUTE),
+            Charge::Filling
+        );
+    }
+
+    /// A gauge that tops out below 100 is why `FULL_ENOUGH` exists: once it has
+    /// been seen to climb, that stall is a finished charge.
+    #[test]
+    fn a_stall_near_full_after_a_real_climb_is_a_finished_charge() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(97, start);
+        assert_eq!(judge_charge(&mut watch, 99, start + MINUTE), Charge::Filling);
+        let settled = start + MINUTE + FULL_STALL_MS;
+        assert_eq!(judge_charge(&mut watch, 99, settled), Charge::Full);
+    }
+
+    /// The phantom the log shows: 95% sat there claiming the cable, never
+    /// climbed, and the old rule announced a charge that never happened.
+    #[test]
+    fn a_stall_near_full_that_never_climbed_announces_nothing() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(95, start);
+        assert_eq!(
+            judge_charge(&mut watch, 95, start + FULL_STALL_MS),
+            Charge::Disbelieved
+        );
+        assert!(!completed_on_unplug(&watch));
+    }
+
+    #[test]
+    fn a_hundred_percent_is_full_however_it_got_there() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(96, start);
+        assert_eq!(judge_charge(&mut watch, 100, start + MINUTE), Charge::Full);
+    }
+
+    #[test]
+    fn unplugging_after_a_real_charge_announces_it() {
+        let mut watch = watch_at(97, 0);
+        watch.climbed = true;
+        assert!(completed_on_unplug(&watch));
+        watch.peak = 60;
+        assert!(!completed_on_unplug(&watch));
+    }
+
+    #[test]
+    fn unplugging_after_a_disbelieved_claim_announces_nothing() {
+        let mut watch = watch_at(97, 0);
+        watch.climbed = true;
+        watch.stale = true;
+        assert!(!completed_on_unplug(&watch));
+    }
 }

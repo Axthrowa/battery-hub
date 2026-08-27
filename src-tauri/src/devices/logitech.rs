@@ -293,16 +293,16 @@ fn read_hidpp10_battery(dev: &HidDevice, device_index: u8) -> Option<(u8, bool)>
     None
 }
 
-/// Last real answer per receiver slot.
+/// Last real level per receiver slot.
 ///
 /// A mouse that has gone to sleep answers nothing, and the older battery
 /// features on the same receiver will happily answer in its place with numbers
-/// that describe no device. Holding the last true reading for a few minutes
-/// keeps the card populated across a nap without ever showing an invented one.
+/// that describe no device. Holding the last true level for a few minutes keeps
+/// the card populated across a nap without ever showing an invented one.
 const READING_TTL: Duration = Duration::from_secs(5 * 60);
 
 struct LastReading {
-    value: (u8, bool),
+    percent: u8,
     at: Instant,
 }
 
@@ -316,7 +316,7 @@ fn remember(device_index: u8, value: (u8, bool)) -> (u8, bool) {
         cache.insert(
             device_index,
             LastReading {
-                value,
+                percent: value.0,
                 at: Instant::now(),
             },
         );
@@ -324,12 +324,19 @@ fn remember(device_index: u8, value: (u8, bool)) -> (u8, bool) {
     value
 }
 
+/// The level only — never the charging flag that came with it.
+///
+/// Falling silent is not a neutral event. Pulling the cable is one of the
+/// commonest reasons a device stops answering, so a cached "charging" is wrong
+/// at exactly the moment it gets served, and the panel goes on showing a bolt
+/// and a finished charge for the whole five minutes. A level survives a nap
+/// unchanged; a charging flag does not, so only the level is handed on.
 fn recent(device_index: u8) -> Option<(u8, bool)> {
     reading_cache().lock().ok().and_then(|cache| {
         cache
             .get(&device_index)
             .filter(|last| last.at.elapsed() < READING_TTL)
-            .map(|last| last.value)
+            .map(|last| (last.percent, false))
     })
 }
 

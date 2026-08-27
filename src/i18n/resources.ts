@@ -59,6 +59,16 @@ export const resources = {
       levelHigh: "İyi",
       levelMedium: "Orta",
       levelLow: "Düşük",
+      appearance: "Görünüm",
+      theme: "Tema",
+      themeSystem: "Sistem",
+      themeDark: "Koyu",
+      themeLight: "Açık",
+      themeHint: "Sistem, Windows'un açık/koyu ayarını izler",
+      accentColor: "Vurgu rengi",
+      notifications: "Bildirimler",
+      notificationSound: "Bildirim sesi",
+      notificationSoundHint: "Şarj tamamlandı ve düşük pil bildirimleri sesli çalar",
     },
   },
   en: {
@@ -121,9 +131,34 @@ export const resources = {
       levelHigh: "Good",
       levelMedium: "Medium",
       levelLow: "Low",
+      appearance: "Appearance",
+      theme: "Theme",
+      themeSystem: "System",
+      themeDark: "Dark",
+      themeLight: "Light",
+      themeHint: "System follows the Windows light/dark setting",
+      accentColor: "Accent colour",
+      notifications: "Notifications",
+      notificationSound: "Notification sound",
+      notificationSoundHint: "Charge-complete and low-battery toasts play a sound",
     },
   },
 } as const;
 
 export const POLL_OPTIONS = [10, 30, 60, 300] as const;
+
+// Accents are stored as one hex and used on both grounds — the light theme
+// darkens what it is given (see styles.css), so these are chosen to stay
+// legible after that rather than to look their best on the dark panel alone.
+export const ACCENTS = [
+  { id: "teal", value: "#5eead4" },
+  { id: "green", value: "#7fe081" },
+  { id: "blue", value: "#7cc4fa" },
+  { id: "violet", value: "#b8a6fb" },
+  { id: "rose", value: "#fb9ab4" },
+  { id: "amber", value: "#fbc46a" },
+] as const;
+
+export const DEFAULT_ACCENT = ACCENTS[0].value;
+
 export type Locale = keyof typeof resources;
