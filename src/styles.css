@@ -155,6 +155,25 @@
   --bh-ground: var(--ground-plain);
 }
 
+/*
+ * A picture of the user's own, under a veil.
+ *
+ * The veil is not decoration: the header text sits straight on the ground, and
+ * over a photograph a thin grey subtitle disappears. It is graded darker
+ * towards the bottom, where the cards and the refresh button are, and left
+ * lighter at the top where the picture is mostly what there is to look at.
+ */
+:root[data-bg="image"] {
+  --bh-ground:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bh-canvas-mid) 46%, transparent),
+      color-mix(in srgb, var(--bh-canvas-mid) 72%, transparent)
+    ),
+    var(--bh-image, none) center / cover no-repeat,
+    var(--ground-plain);
+}
+
 @layer base {
   html,
   body,

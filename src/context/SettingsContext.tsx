@@ -31,9 +31,13 @@ export interface Settings {
   /** Which ground the panel is drawn on — see `styles.css`. */
   background: Background;
   notificationSound: boolean;
-  /** Name of the chosen sound file, for showing which one it is. The file
-   *  itself lives beside the settings, written by Rust. */
-  soundFileName: string | null;
+  /** Names of the chosen sound files, for showing which is which. The files
+   *  themselves live beside the settings, written by Rust. */
+  soundFileFull: string | null;
+  soundFileLow: string | null;
+  /** Cropped data URIs — see `lib/images.ts`. */
+  backgroundImage: string | null;
+  devicesImage: string | null;
 }
 
 const DEFAULTS: Settings = {
@@ -44,7 +48,10 @@ const DEFAULTS: Settings = {
   accent: DEFAULT_ACCENT,
   background: DEFAULT_BACKGROUND,
   notificationSound: true,
-  soundFileName: null,
+  soundFileFull: null,
+  soundFileLow: null,
+  backgroundImage: null,
+  devicesImage: null,
 };
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
@@ -54,11 +61,17 @@ function prefersDark() {
 }
 
 /** Hand the theme to the document: CSS does the rest, keyed off `data-theme`. */
-function paint(theme: Theme, accent: string, background: Background) {
+function paint(settings: Settings) {
   const root = document.documentElement;
-  root.dataset.theme = theme === "system" ? (prefersDark() ? "dark" : "light") : theme;
-  root.dataset.bg = background;
-  root.style.setProperty("--bh-accent", accent);
+  root.dataset.theme =
+    settings.theme === "system" ? (prefersDark() ? "dark" : "light") : settings.theme;
+  // A picture wins over the chosen ground; without one the ground stands.
+  root.dataset.bg = settings.backgroundImage ? "image" : settings.background;
+  root.style.setProperty("--bh-accent", settings.accent);
+  root.style.setProperty(
+    "--bh-image",
+    settings.backgroundImage ? `url("${settings.backgroundImage}")` : "none",
+  );
 }
 
 /**
@@ -70,8 +83,7 @@ function paint(theme: Theme, accent: string, background: Background) {
  * stored value is enough to get the first frame right.
  */
 export function applyStoredTheme() {
-  const stored = readLocal();
-  paint(stored.theme, stored.accent, stored.background);
+  paint(readLocal());
 }
 const STORE_FILE = "settings.json";
 const STORE_KEY = "settings";
@@ -89,6 +101,14 @@ interface SettingsContextValue {
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
+
+function fileName(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.slice(0, 120) : null;
+}
+
+function dataUri(value: unknown): string | null {
+  return typeof value === "string" && value.startsWith("data:image/") ? value : null;
+}
 
 function sanitize(raw: unknown): Settings {
   const value = (raw ?? {}) as Partial<Settings>;
@@ -111,10 +131,10 @@ function sanitize(raw: unknown): Settings {
       ? (value.background as Background)
       : DEFAULTS.background,
     notificationSound: value.notificationSound !== false,
-    soundFileName:
-      typeof value.soundFileName === "string" && value.soundFileName.trim()
-        ? value.soundFileName.slice(0, 120)
-        : null,
+    soundFileFull: fileName(value.soundFileFull),
+    soundFileLow: fileName(value.soundFileLow),
+    backgroundImage: dataUri(value.backgroundImage),
+    devicesImage: dataUri(value.devicesImage),
   };
 }
 
@@ -192,17 +212,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   // Painted before `ready` too, so the first frame is not the wrong theme.
   useEffect(() => {
-    paint(settings.theme, settings.accent, settings.background);
-  }, [settings.theme, settings.accent, settings.background]);
+    paint(settings);
+  }, [settings]);
 
   // Only `system` cares what Windows is doing.
   useEffect(() => {
     if (settings.theme !== "system") return;
     const media = window.matchMedia(DARK_QUERY);
-    const onChange = () => paint("system", settings.accent, settings.background);
+    const onChange = () => paint(settings);
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
-  }, [settings.theme, settings.accent, settings.background]);
+  }, [settings]);
 
   useEffect(() => {
     if (!ready) return;

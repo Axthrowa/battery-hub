@@ -147,7 +147,26 @@ export default function App() {
         </button>
       </header>
 
-      <section className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+      <section
+        className={`min-h-0 flex-1 overflow-y-auto ${
+          settings.devicesImage ? "rounded-2xl p-2.5" : "pr-0.5"
+        }`}
+        style={
+          settings.devicesImage
+            ? {
+                // The veil is what keeps the cards' own text legible over a
+                // photograph; the picture is still plainly the picture.
+                backgroundImage:
+                  "linear-gradient(180deg," +
+                  " color-mix(in srgb, var(--bh-canvas-mid) 38%, transparent)," +
+                  " color-mix(in srgb, var(--bh-canvas-mid) 66%, transparent))," +
+                  `url(${settings.devicesImage})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }
+            : undefined
+        }
+      >
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-xs font-medium tracking-wide text-neutral-400 uppercase">
             {t("dashboard")}

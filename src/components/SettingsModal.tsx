@@ -5,6 +5,9 @@ import { ACCENTS, BACKGROUNDS, POLL_OPTIONS } from "../i18n/resources";
 import type { Background, Locale } from "../i18n/resources";
 import { useSettings } from "../context/SettingsContext";
 import { setNotificationSoundFile, testNotificationSound } from "../lib/bridge";
+import type { SoundKind } from "../lib/bridge";
+import { BACKGROUND_TARGET, DEVICES_TARGET, pickImage } from "../lib/images";
+import type { ImageTarget } from "../lib/images";
 import type { Theme } from "../context/SettingsContext";
 
 interface SettingsModalProps {
@@ -66,6 +69,72 @@ function Choice({
   );
 }
 
+/** One chosen-file row: what is in force, and the buttons that change it. */
+function PickRow({
+  label,
+  hint,
+  current,
+  fallback,
+  error,
+  onChoose,
+  onClear,
+  onTest,
+  testDisabled,
+  chooseLabel,
+  clearLabel,
+  testLabel,
+}: {
+  label: string;
+  hint?: string;
+  current: string | null;
+  fallback: string;
+  error?: string | null;
+  onChoose: () => void;
+  onClear: () => void;
+  onTest?: () => void;
+  testDisabled?: boolean;
+  chooseLabel: string;
+  clearLabel: string;
+  testLabel: string;
+}) {
+  return (
+    <div className="mt-2 rounded-xl border border-white/10 bg-ink-800 p-3.5">
+      <p className="text-sm text-neutral-200">{label}</p>
+      {hint ? <p className="mt-0.5 text-xs text-neutral-500">{hint}</p> : null}
+      <p className="mt-1.5 truncate text-xs text-neutral-400">{current ?? fallback}</p>
+      {error ? <p className="mt-1 text-xs text-red-300">{error}</p> : null}
+      <div className="mt-2.5 flex gap-2">
+        <button
+          type="button"
+          onClick={onChoose}
+          className="flex-1 rounded-lg border border-white/10 py-1.5 text-xs text-neutral-300 transition hover:border-white/25"
+        >
+          {chooseLabel}
+        </button>
+        {current ? (
+          <button
+            type="button"
+            onClick={onClear}
+            className="flex-1 rounded-lg border border-white/10 py-1.5 text-xs text-neutral-300 transition hover:border-white/25"
+          >
+            {clearLabel}
+          </button>
+        ) : null}
+        {onTest ? (
+          <button
+            type="button"
+            onClick={onTest}
+            disabled={testDisabled}
+            className="flex-1 rounded-lg border border-accent/40 py-1.5 text-xs text-accent transition hover:border-accent/70 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {testLabel}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function Toggle({
   label,
   hint,
@@ -101,26 +170,38 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { t } = useTranslation();
   const { settings, update } = useSettings();
   const soundInput = useRef<HTMLInputElement>(null);
-  const [soundError, setSoundError] = useState<string | null>(null);
+  const pendingKind = useRef<SoundKind>("full");
+  const [soundError, setSoundError] = useState<Partial<Record<SoundKind, string>>>({});
+
+  const chooseSound = (kind: SoundKind) => {
+    pendingKind.current = kind;
+    soundInput.current?.click();
+  };
 
   // The file goes to Rust, which is what has to play it; only the name is kept
   // here, so the panel can say which one is in force.
-  const pickSound = async (file: File | null) => {
+  const takeSound = async (file: File | null) => {
     if (!file) return;
-    setSoundError(null);
+    const kind = pendingKind.current;
+    setSoundError((prev) => ({ ...prev, [kind]: undefined }));
     const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
-    const refused = await setNotificationSoundFile(bytes);
+    const refused = await setNotificationSoundFile(kind, bytes);
     if (refused) {
-      setSoundError(refused);
+      setSoundError((prev) => ({ ...prev, [kind]: refused }));
       return;
     }
-    await update({ soundFileName: file.name });
+    await update(kind === "full" ? { soundFileFull: file.name } : { soundFileLow: file.name });
   };
 
-  const clearSound = async () => {
-    setSoundError(null);
-    await setNotificationSoundFile(null);
-    await update({ soundFileName: null });
+  const clearSound = async (kind: SoundKind) => {
+    setSoundError((prev) => ({ ...prev, [kind]: undefined }));
+    await setNotificationSoundFile(kind, null);
+    await update(kind === "full" ? { soundFileFull: null } : { soundFileLow: null });
+  };
+
+  const chooseImage = async (target: ImageTarget, key: "backgroundImage" | "devicesImage") => {
+    const uri = await pickImage(target);
+    if (uri) await update({ [key]: uri });
   };
 
   if (!open) return null;
@@ -266,49 +347,71 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               onChange={(value) => void update({ notificationSound: value })}
             />
 
-            <div className="mt-2 rounded-xl border border-white/10 bg-ink-800 p-3.5">
-              <p className="text-sm text-neutral-200">{t("soundFile")}</p>
-              <p className="mt-0.5 text-xs text-neutral-500">{t("soundFileHint")}</p>
-              <p className="mt-2 truncate text-xs text-neutral-400">
-                {settings.soundFileName ?? t("soundFileDefault")}
-              </p>
-              {soundError ? (
-                <p className="mt-1 text-xs text-red-300">{soundError}</p>
-              ) : null}
-              <div className="mt-2.5 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => soundInput.current?.click()}
-                  className="flex-1 rounded-lg border border-white/10 py-1.5 text-xs text-neutral-300 transition hover:border-white/25"
-                >
-                  {t("choose")}
-                </button>
-                {settings.soundFileName ? (
-                  <button
-                    type="button"
-                    onClick={() => void clearSound()}
-                    className="flex-1 rounded-lg border border-white/10 py-1.5 text-xs text-neutral-300 transition hover:border-white/25"
-                  >
-                    {t("remove")}
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => void testNotificationSound()}
-                  disabled={!settings.notificationSound}
-                  className="flex-1 rounded-lg border border-accent/40 py-1.5 text-xs text-accent transition hover:border-accent/70 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {t("test")}
-                </button>
-              </div>
-              <input
-                ref={soundInput}
-                type="file"
-                accept="audio/wav,.wav"
-                className="hidden"
-                onChange={(event) => void pickSound(event.target.files?.[0] ?? null)}
-              />
-            </div>
+            <p className="mt-2 text-xs text-neutral-500">{t("soundFileHint")}</p>
+            <PickRow
+              label={t("soundFull")}
+              current={settings.soundFileFull}
+              fallback={t("soundFileDefault")}
+              error={soundError.full}
+              onChoose={() => chooseSound("full")}
+              onClear={() => void clearSound("full")}
+              onTest={() => void testNotificationSound("full")}
+              testDisabled={!settings.notificationSound}
+              chooseLabel={t("choose")}
+              clearLabel={t("remove")}
+              testLabel={t("test")}
+            />
+            <PickRow
+              label={t("soundLow")}
+              current={settings.soundFileLow}
+              fallback={t("soundFileDefault")}
+              error={soundError.low}
+              onChoose={() => chooseSound("low")}
+              onClear={() => void clearSound("low")}
+              onTest={() => void testNotificationSound("low")}
+              testDisabled={!settings.notificationSound}
+              chooseLabel={t("choose")}
+              clearLabel={t("remove")}
+              testLabel={t("test")}
+            />
+            <input
+              ref={soundInput}
+              type="file"
+              accept="audio/wav,.wav"
+              className="hidden"
+              onChange={(event) => void takeSound(event.target.files?.[0] ?? null)}
+            />
+          </Section>
+
+          <Section title={t("images")}>
+            <PickRow
+              label={t("backgroundImage")}
+              hint={t("imageHint", {
+                width: BACKGROUND_TARGET.width,
+                height: BACKGROUND_TARGET.height,
+              })}
+              current={settings.backgroundImage ? t("imageSet") : null}
+              fallback={t("imageNone")}
+              onChoose={() => void chooseImage(BACKGROUND_TARGET, "backgroundImage")}
+              onClear={() => void update({ backgroundImage: null })}
+              chooseLabel={t("choose")}
+              clearLabel={t("remove")}
+              testLabel={t("test")}
+            />
+            <PickRow
+              label={t("devicesImage")}
+              hint={t("imageHint", {
+                width: DEVICES_TARGET.width,
+                height: DEVICES_TARGET.height,
+              })}
+              current={settings.devicesImage ? t("imageSet") : null}
+              fallback={t("imageNone")}
+              onChoose={() => void chooseImage(DEVICES_TARGET, "devicesImage")}
+              onClear={() => void update({ devicesImage: null })}
+              chooseLabel={t("choose")}
+              clearLabel={t("remove")}
+              testLabel={t("test")}
+            />
           </Section>
 
           <Toggle

@@ -73,6 +73,9 @@ export const lastReading = () => safeInvoke<BatteryReading | null>("last_reading
 export const lastDevices = () => safeInvoke<DeviceSnapshot | null>("last_devices");
 export const requestRefresh = () => safeInvoke<void>("refresh_now");
 export const setPollSeconds = (seconds: number) => safeInvoke<void>("set_poll_seconds", { seconds });
+/** Which notification a sound belongs to. */
+export type SoundKind = "full" | "low";
+
 /** Whether the toasts Rust raises are allowed to make a sound. */
 export const setNotificationSound = (enabled: boolean) =>
   safeInvoke<void>("set_notification_sound", { enabled });
@@ -83,10 +86,13 @@ export const setNotificationSound = (enabled: boolean) =>
  * refused — a wrong format is worth saying out loud rather than storing a file
  * that would silently never play.
  */
-export async function setNotificationSoundFile(bytes: number[] | null): Promise<string | null> {
+export async function setNotificationSoundFile(
+  kind: SoundKind,
+  bytes: number[] | null,
+): Promise<string | null> {
   if (!isTauri) return null;
   try {
-    await invoke("set_notification_sound_file", { data: bytes });
+    await invoke("set_notification_sound_file", { kind, data: bytes });
     return null;
   } catch (err) {
     return String(err);
@@ -94,7 +100,8 @@ export async function setNotificationSoundFile(bytes: number[] | null): Promise<
 }
 
 /** Play what a notification would play, without waiting for one. */
-export const testNotificationSound = () => safeInvoke<void>("test_notification_sound");
+export const testNotificationSound = (kind: SoundKind) =>
+  safeInvoke<void>("test_notification_sound", { kind });
 export const closeToTray = () => safeInvoke<void>("close_to_tray");
 
 /** A byte the scan believes could be a state of charge. */

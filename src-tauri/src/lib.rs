@@ -34,9 +34,26 @@ const ARG_REQUIRE_DONGLE: &str = "--require-dongle";
 const ARG_SCAN_DEVICES: &str = "--scan-devices";
 /// Per-device low-battery threshold (exclusive: notify when percent < this).
 const LOW_BATTERY_THRESHOLD: u8 = 20;
-/// A sound the user supplied, kept beside the settings so it survives an
-/// upgrade, and named plainly because a person may well go looking for it.
-const SOUND_FILE: &str = "notification.wav";
+/// Sounds the user supplied, kept beside the settings so they survive an
+/// upgrade, and named plainly because a person may well go looking for them.
+///
+/// The two events are worth telling apart by ear: one says a cable can come
+/// out, the other says a device is about to stop working.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SoundKind {
+    Full,
+    Low,
+}
+
+impl SoundKind {
+    fn file_name(self) -> &'static str {
+        match self {
+            SoundKind::Full => "notification-full.wav",
+            SoundKind::Low => "notification-low.wav",
+        }
+    }
+}
 /// Enough for any notification chime, and small enough that a wrong file
 /// cannot fill the disk: a WAV this size is over a minute of CD audio.
 const SOUND_FILE_MAX: usize = 5 * 1024 * 1024;
@@ -428,13 +445,13 @@ fn register_toast_identity(app: &AppHandle) {
     }
 }
 
-fn sound_file_path() -> Option<std::path::PathBuf> {
+fn sound_file_path(kind: SoundKind) -> Option<std::path::PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA")
         .or_else(|| std::env::var_os("APPDATA"))
         .map(std::path::PathBuf::from)?;
     let dir = base.join("Battery Hub");
     let _ = std::fs::create_dir_all(&dir);
-    Some(dir.join(SOUND_FILE))
+    Some(dir.join(kind.file_name()))
 }
 
 /// Play a chosen sound file, if there is one, and say whether it was played.
@@ -445,7 +462,7 @@ fn sound_file_path() -> Option<std::path::PathBuf> {
 /// on purpose and the file is played beside it, which from the other side of
 /// the speakers is the same notification either way.
 #[cfg(windows)]
-fn play_sound_file() -> bool {
+fn play_sound_file(kind: SoundKind) -> bool {
     use std::os::windows::ffi::OsStrExt;
 
     #[link(name = "winmm")]
@@ -456,7 +473,7 @@ fn play_sound_file() -> bool {
     const SND_NODEFAULT: u32 = 0x0002;
     const SND_FILENAME: u32 = 0x0002_0000;
 
-    let Some(path) = sound_file_path().filter(|p| p.is_file()) else {
+    let Some(path) = sound_file_path(kind).filter(|p| p.is_file()) else {
         return false;
     };
     let wide: Vec<u16> = path
@@ -469,7 +486,7 @@ fn play_sound_file() -> bool {
 }
 
 #[cfg(not(windows))]
-fn play_sound_file() -> bool {
+fn play_sound_file(_kind: SoundKind) -> bool {
     false
 }
 
@@ -481,11 +498,12 @@ fn play_sound_file() -> bool {
 fn with_sound<R: tauri::Runtime>(
     shared: &Shared,
     builder: tauri_plugin_notification::NotificationBuilder<R>,
+    kind: SoundKind,
 ) -> tauri_plugin_notification::NotificationBuilder<R> {
     if !shared.notify_sound.load(Ordering::Relaxed) {
         return builder;
     }
-    if play_sound_file() {
+    if play_sound_file(kind) {
         return builder;
     }
     builder.sound(NOTIFICATION_SOUND)
@@ -542,6 +560,7 @@ fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
         let toast = with_sound(
             shared,
             app.notification().builder().title("Battery Hub").body(&body),
+            SoundKind::Low,
         );
         match toast.show() {
             Ok(()) => {
@@ -683,7 +702,11 @@ fn notify_full_charge(
                 format!("{product} is fully charged"),
             )
         };
-        let toast = with_sound(shared, app.notification().builder().title(title).body(&body));
+        let toast = with_sound(
+            shared,
+            app.notification().builder().title(title).body(&body),
+            SoundKind::Full,
+        );
         match toast.show() {
             Ok(()) => devices::diagnostics::emit_line(&format!("[notify] sent: {body}")),
             Err(err) => {
@@ -942,8 +965,8 @@ fn set_notification_sound(state: State<'_, Arc<Shared>>, enabled: bool) {
 
 /// Store a sound the user picked, or clear it when given nothing.
 #[tauri::command]
-fn set_notification_sound_file(data: Option<Vec<u8>>) -> Result<bool, String> {
-    let path = sound_file_path().ok_or("No writable app data directory.")?;
+fn set_notification_sound_file(kind: SoundKind, data: Option<Vec<u8>>) -> Result<bool, String> {
+    let path = sound_file_path(kind).ok_or("No writable app data directory.")?;
     match data {
         Some(bytes) => {
             if bytes.is_empty() {
@@ -970,14 +993,19 @@ fn set_notification_sound_file(data: Option<Vec<u8>>) -> Result<bool, String> {
 /// Play what a notification would play, so the choice can be heard before one
 /// arrives — which is otherwise a matter of waiting for a battery to run down.
 #[tauri::command]
-fn test_notification_sound(app: AppHandle, state: State<'_, Arc<Shared>>) {
+fn test_notification_sound(app: AppHandle, state: State<'_, Arc<Shared>>, kind: SoundKind) {
     let tr = state.locale.lock().unwrap().starts_with("tr");
-    let (title, body) = if tr {
-        ("Battery Hub", "Bildirim sesi denemesi")
-    } else {
-        ("Battery Hub", "Notification sound test")
+    let (title, body) = match (tr, kind) {
+        (true, SoundKind::Full) => ("Battery Hub", "Şarj tamamlandı — ses denemesi"),
+        (true, SoundKind::Low) => ("Battery Hub", "Düşük pil — ses denemesi"),
+        (false, SoundKind::Full) => ("Battery Hub", "Charging complete — sound test"),
+        (false, SoundKind::Low) => ("Battery Hub", "Low battery — sound test"),
     };
-    let toast = with_sound(&state, app.notification().builder().title(title).body(body));
+    let toast = with_sound(
+        &state,
+        app.notification().builder().title(title).body(body),
+        kind,
+    );
     if let Err(err) = toast.show() {
         devices::diagnostics::emit_line(&format!("[notify] test FAILED — {err}"));
     }
