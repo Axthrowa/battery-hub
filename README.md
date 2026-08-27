@@ -212,12 +212,34 @@ Get-WinEvent -LogName 'Microsoft-Windows-CodeIntegrity/Operational' |
   Where-Object { $_.Id -in 3033, 3077, 3089 }
 ```
 
-## Probing a device without building anything
+## Running under Smart App Control without building anything
 
 `scripts/hid-probe.py` reads HID devices through Windows' own signed
 `hid.dll` / `setupapi.dll` via ctypes. It loads no native code of its own, so it
 runs under Smart App Control as-is — useful precisely when a freshly compiled
 probe would be blocked.
+
+`scripts/battery-watch.py` takes that opening further. Where SAC has turned
+itself on, no new `battery-hub.exe` can run at all, and there is no free way
+around that: the block is on loading new native images, and a self-signed
+certificate never satisfies the policy. Interpreted code is not gated, so this
+script speaks the same two vendor frames the Rust readers speak and runs
+`judge_charge()` from `src-tauri/src/lib.rs`, transcribed. What it prints is
+what the panel would show:
+
+```
+python scripts/battery-watch.py                  # every 8 seconds, forever
+python scripts/battery-watch.py 8 --count 24     # a bounded run
+python scripts/battery-watch.py 30 --raw         # with the frames
+
+22:47:31  Aula / Compx keyboard    100%   on battery
+22:47:31  Ajazz mouse               92%   not charging (device says charging)
+```
+
+It covers the two 2.4 GHz devices with vendor frames — Aula/Compx keyboards and
+Ajazz mice. Logitech speaks HID++, and Razer and Soundcore have protocols of
+their own; none of those are reimplemented. Keep the constants at the top in
+step with `lib.rs` if the charge rule changes.
 
 ```powershell
 python scripts\hid-probe.py --list   # every HID collection, with report sizes
