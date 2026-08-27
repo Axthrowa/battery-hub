@@ -27,7 +27,6 @@ pub const LOGITECH_VID: u16 = 0x046D;
 // Some(pid) = only that PID (debug). This PC: receiver 0xC54D + mouse 0xC0A8.
 pub const LOGITECH_PID_OVERRIDE: Option<u16> = None;
 
-#[allow(dead_code)]
 pub const LOGITECH_PIDS: &[u16] = &[
     // Receivers
     0xC52B, 0xC532, 0xC539, 0xC53A, 0xC53D, 0xC53F, 0xC541, 0xC545, 0xC547, 0xC548, 0xC54D,
@@ -40,10 +39,6 @@ pub const LOGITECH_PIDS: &[u16] = &[
 // ---------------------------------------------------------------------------
 // BURAYA AJAZZ VID GİRİLECEK: 0x3151
 pub const AJAZZ_VID_PRIMARY: u16 = 0x3151;
-
-#[allow(dead_code)]
-// None = any Ajazz / OEM VID in AJAZZ_VIDS (multi-brand 2.4 GHz mice).
-pub const AJAZZ_PID_OVERRIDE: Option<u16> = None;
 
 pub const AJAZZ_VIDS: &[u16] = &[
     0x3151, // AJAZZ 2.4G 8K (this machine)

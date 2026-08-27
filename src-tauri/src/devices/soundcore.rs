@@ -678,21 +678,11 @@ mod winbt {
         lines
     }
 
-    #[allow(dead_code)]
-    pub fn present() -> bool {
-        matches!(read(), r if r.present || r.ok)
-    }
 }
 
 #[cfg(windows)]
 pub fn read() -> DeviceReading {
     winbt::read()
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub fn present() -> bool {
-    winbt::present()
 }
 
 #[cfg(windows)]

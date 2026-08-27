@@ -152,7 +152,7 @@ pub fn dump_bluetooth_devices() {
 /// Called at the top of every poll loop iteration.
 pub fn run_poll_diagnostics() {
     let n = SCAN_COUNT.fetch_add(1, Ordering::Relaxed);
-    if n == 0 || n % 10 == 0 {
+    if n == 0 || n.is_multiple_of(10) {
         dump_all_hid_devices();
         dump_bluetooth_devices();
     } else {

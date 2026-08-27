@@ -122,7 +122,6 @@ fn read_aj_series_battery(dev: &HidDevice) -> Option<(u8, bool)> {
     None
 }
 
-#[allow(dead_code)]
 pub fn receiver_present() -> bool {
     hid::with_api(|api| api.device_list().any(name_looks_ajazz)).unwrap_or(false)
 }

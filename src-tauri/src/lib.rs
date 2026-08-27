@@ -28,6 +28,9 @@ const EVENT_BEFORE_EXIT: &str = "app://before-exit";
 const DEFAULT_POLL_SECONDS: u64 = 60;
 const MIN_POLL_SECONDS: u64 = 5;
 const WATCH_POLL_SECONDS: u64 = 15;
+/// A charge is the one time the number is expected to move, so it is watched
+/// more closely than a device sitting on its own battery.
+const CHARGING_POLL_SECONDS: u64 = 8;
 const DISCONNECT_STRIKES: u32 = 2;
 const ARG_REQUIRE_DONGLE: &str = "--require-dongle";
 const ARG_SCAN_DEVICES: &str = "--scan-devices";
@@ -82,6 +85,8 @@ struct Shared {
     last_tray_fingerprint: Mutex<String>,
     tray_items: Mutex<Option<TrayItems>>,
     connected: AtomicBool,
+    /// Something is on a charger right now.
+    charging: AtomicBool,
     misses: AtomicU32,
     dongle_seen: AtomicBool,
     dongle_misses: AtomicU32,
@@ -109,6 +114,7 @@ impl Shared {
             last_tray_fingerprint: Mutex::new(String::new()),
             tray_items: Mutex::new(None),
             connected: AtomicBool::new(false),
+            charging: AtomicBool::new(false),
             misses: AtomicU32::new(0),
             dongle_seen: AtomicBool::new(false),
             dongle_misses: AtomicU32::new(0),
@@ -122,7 +128,9 @@ impl Shared {
 
     fn poll_interval(&self) -> Duration {
         let configured = self.poll_seconds.load(Ordering::Relaxed).max(MIN_POLL_SECONDS);
-        let seconds = if self.connected.load(Ordering::Acquire) {
+        let seconds = if self.charging.load(Ordering::Acquire) {
+            configured.min(CHARGING_POLL_SECONDS)
+        } else if self.connected.load(Ordering::Acquire) {
             configured.min(WATCH_POLL_SECONDS)
         } else {
             configured
@@ -241,6 +249,66 @@ fn close_window_to_tray(window: &Window) {
     let _ = window.close();
 }
 
+/// Tell Windows who `com.axthrowa.battery-hub` is.
+///
+/// Toasts are addressed by AppUserModelID, and an unpackaged app has to say
+/// what its own ID stands for or the shell drops every notification without a
+/// word — no error reaches the caller, the toast simply never appears. The
+/// display name and icon here are what shows in Settings → Notifications, so
+/// the user can find the app and turn it on.
+#[cfg(windows)]
+fn register_toast_identity(app: &AppHandle) {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn RegSetKeyValueW(
+            key: isize,
+            sub_key: *const u16,
+            value: *const u16,
+            kind: u32,
+            data: *const core::ffi::c_void,
+            bytes: u32,
+        ) -> i32;
+    }
+    const HKEY_CURRENT_USER: isize = 0x8000_0001u32 as i32 as isize;
+    const REG_SZ: u32 = 1;
+
+    fn wide(text: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    let identifier = app.config().identifier.clone();
+    let sub_key = wide(&format!("Software\\Classes\\AppUserModelId\\{identifier}"));
+    let icon = std::env::current_exe()
+        .map(|exe| format!("{},0", exe.display()))
+        .unwrap_or_default();
+
+    for (name, value) in [("DisplayName", "Battery Hub"), ("IconUri", icon.as_str())] {
+        if value.is_empty() {
+            continue;
+        }
+        let name = wide(name);
+        let data = wide(value);
+        let status = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                sub_key.as_ptr(),
+                name.as_ptr(),
+                REG_SZ,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        };
+        if status != 0 {
+            eprintln!("toast identity: writing {status} failed");
+        }
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -289,16 +357,20 @@ fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
             device.product.clone()
         };
         let body = format!("{product} low battery");
-        devices::diagnostics::emit_line(&format!("[notify] {body} ({percent}%)"));
-        if let Err(err) = app
+        match app
             .notification()
             .builder()
             .title("Battery Hub")
             .body(&body)
             .show()
         {
-            eprintln!("low-battery notification failed: {err}");
-            notified.remove(&key);
+            Ok(()) => {
+                devices::diagnostics::emit_line(&format!("[notify] sent: {body} ({percent}%)"))
+            }
+            Err(err) => {
+                devices::diagnostics::emit_line(&format!("[notify] FAILED: {body} — {err}"));
+                notified.remove(&key);
+            }
         }
     }
 }
@@ -352,6 +424,10 @@ fn apply_charge_state(app: &AppHandle, shared: &Shared, snapshot: &mut DeviceSna
     drop(watch);
 
     snapshot.online = snapshot.devices.iter().filter(|d| d.ok).cloned().collect();
+    shared.charging.store(
+        snapshot.devices.iter().any(|d| d.charging && !d.full),
+        Ordering::Release,
+    );
     notify_full_charge(app, shared, snapshot, &finished);
 }
 
@@ -400,8 +476,7 @@ fn notify_full_charge(
                 format!("{product} is fully charged"),
             )
         };
-        devices::diagnostics::emit_line(&format!("[notify] {body}"));
-        if let Err(err) = app
+        match app
             .notification()
             .builder()
             .title(title)
@@ -409,8 +484,11 @@ fn notify_full_charge(
             .sound(FULL_CHARGE_SOUND)
             .show()
         {
-            eprintln!("full-charge notification failed: {err}");
-            notified.remove(key);
+            Ok(()) => devices::diagnostics::emit_line(&format!("[notify] sent: {body}")),
+            Err(err) => {
+                devices::diagnostics::emit_line(&format!("[notify] FAILED: {body} — {err}"));
+                notified.remove(key);
+            }
         }
     }
 }
@@ -773,14 +851,13 @@ pub fn run() {
                 WINDOW_READY.store(false, Ordering::Release);
             }
             // Minimize → destroy webview (never hide).
-            WindowEvent::Resized(_) => {
+            WindowEvent::Resized(_)
                 if WINDOW_READY.load(Ordering::Acquire)
                     && window.is_minimized().unwrap_or(false)
-                    && window.is_visible().unwrap_or(false)
-                {
-                    let _ = window.unminimize();
-                    close_window_to_tray(window);
-                }
+                    && window.is_visible().unwrap_or(false) =>
+            {
+                let _ = window.unminimize();
+                close_window_to_tray(window);
             }
             _ => {}
         })
@@ -798,6 +875,8 @@ pub fn run() {
                     Some(vec!["--minimized"]),
                 ))?;
                 reconcile_autostart(app.handle());
+                #[cfg(windows)]
+                register_toast_identity(app.handle());
             }
 
             // Bildirim izni yoksa iste; aksi halde `.show()` sessizce başarısız olur

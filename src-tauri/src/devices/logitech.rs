@@ -11,6 +11,8 @@ use super::{Brand, DeviceReading};
 use hidapi::{DeviceInfo, HidDevice};
 use std::cmp::Reverse;
 use std::ffi::CString;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const SHORT_ID: u8 = 0x10;
@@ -102,10 +104,14 @@ fn drain(dev: &HidDevice) {
 }
 
 fn write_msg(dev: &HidDevice, data: &[u8]) -> bool {
-    match dev.write(data) {
-        Ok(n) if n > 0 => true,
-        _ => false,
-    }
+    matches!(dev.write(data), Ok(sent) if sent > 0)
+}
+
+/// Third byte of a HID++ 2.0 call: the function in the high nibble, the
+/// software id in the low one. The reply echoes it whole, which is what
+/// separates an answer from a notification the device sent unprompted.
+fn call_byte(function: u8) -> u8 {
+    (function << 4) | SW_ID
 }
 
 fn read_matching(
@@ -150,7 +156,12 @@ fn read_matching(
         if body[0] != device_index || body[1] != feature_index {
             continue;
         }
-        if (body[2] >> 4) != (fn_id & 0x0F) {
+        // A reply echoes the software id it was asked with; a notification the
+        // device sends on its own carries none. Matching on the function nibble
+        // alone lets those through, and their payload lands in the same places
+        // a battery answer would — which is how a mouse sitting at 100% came
+        // back as 15% for a few polls after the real answer timed out.
+        if body[2] != call_byte(fn_id & 0x0F) {
             continue;
         }
         return Some(body.to_vec());
@@ -162,7 +173,7 @@ fn get_feature_index(dev: &HidDevice, device_index: u8, feature_id: u16) -> Opti
     msg[0] = LONG_ID;
     msg[1] = device_index;
     msg[2] = 0x00;
-    msg[3] = (0x00 << 4) | SW_ID;
+    msg[3] = call_byte(0x00);
     msg[4] = (feature_id >> 8) as u8;
     msg[5] = (feature_id & 0xFF) as u8;
 
@@ -185,7 +196,7 @@ fn read_unified_battery(dev: &HidDevice, device_index: u8, feat_index: u8) -> Op
     msg[0] = LONG_ID;
     msg[1] = device_index;
     msg[2] = feat_index;
-    msg[3] = (0x01 << 4) | SW_ID;
+    msg[3] = call_byte(0x01);
 
     drain(dev);
     if !write_msg(dev, &msg) {
@@ -198,7 +209,7 @@ fn read_unified_battery(dev: &HidDevice, device_index: u8, feat_index: u8) -> Op
     }
     let status = body.get(5).copied().unwrap_or(0);
     // 1=charging, 2=charging nearly full, 3=charge complete (common mapping)
-    let charging = matches!(status, 1 | 2 | 3);
+    let charging = matches!(status, 1..=3);
     Some((percent, charging))
 }
 
@@ -208,7 +219,7 @@ fn read_battery_status(dev: &HidDevice, device_index: u8, feat_index: u8) -> Opt
     msg[0] = LONG_ID;
     msg[1] = device_index;
     msg[2] = feat_index;
-    msg[3] = (0x00 << 4) | SW_ID;
+    msg[3] = call_byte(0x00);
 
     drain(dev);
     if !write_msg(dev, &msg) {
@@ -217,7 +228,7 @@ fn read_battery_status(dev: &HidDevice, device_index: u8, feat_index: u8) -> Opt
     let body = read_matching(dev, LONG_ID, device_index, feat_index, 0x00, 600)?;
     let discharge = *body.get(3)?;
     let status = body.get(5).copied().unwrap_or(0);
-    let charging = matches!(status, 1 | 2 | 3);
+    let charging = matches!(status, 1..=3);
     if !(1..=100).contains(&discharge) {
         let pct = match discharge {
             0 => 5,
@@ -282,20 +293,78 @@ fn read_hidpp10_battery(dev: &HidDevice, device_index: u8) -> Option<(u8, bool)>
     None
 }
 
+/// Last real answer per receiver slot.
+///
+/// A mouse that has gone to sleep answers nothing, and the older battery
+/// features on the same receiver will happily answer in its place with numbers
+/// that describe no device. Holding the last true reading for a few minutes
+/// keeps the card populated across a nap without ever showing an invented one.
+const READING_TTL: Duration = Duration::from_secs(5 * 60);
+
+struct LastReading {
+    value: (u8, bool),
+    at: Instant,
+}
+
+fn reading_cache() -> &'static Mutex<HashMap<u8, LastReading>> {
+    static CACHE: OnceLock<Mutex<HashMap<u8, LastReading>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn remember(device_index: u8, value: (u8, bool)) -> (u8, bool) {
+    if let Ok(mut cache) = reading_cache().lock() {
+        cache.insert(
+            device_index,
+            LastReading {
+                value,
+                at: Instant::now(),
+            },
+        );
+    }
+    value
+}
+
+fn recent(device_index: u8) -> Option<(u8, bool)> {
+    reading_cache().lock().ok().and_then(|cache| {
+        cache
+            .get(&device_index)
+            .filter(|last| last.at.elapsed() < READING_TTL)
+            .map(|last| last.value)
+    })
+}
+
 fn try_device_index(dev: &HidDevice, device_index: u8) -> Option<(u8, bool)> {
+    // Which of the three answered is worth recording: they disagree, and when
+    // one of them starts returning nonsense the log is the only way to tell
+    // them apart afterwards.
+    let note = |source: &str, value: (u8, bool)| {
+        super::diagnostics::emit_line(&format!(
+            "[hidpp] dev{device_index} {source} -> {}% charging={}",
+            value.0, value.1
+        ));
+        value
+    };
+
+    // A device that carries UnifiedBattery is answered by it and nothing else.
+    // The older features stay reachable on such hardware but do not describe it
+    // any more: on a PRO X2 SUPERSTRIKE sitting at 100%, 0x1000 answers "15%,
+    // charging". Falling through to it whenever 0x1004 misses a poll turned
+    // that into a reading, and into a low-battery toast for a full mouse.
     if let Some(idx) = get_feature_index(dev, device_index, FEAT_UNIFIED_BATTERY) {
-        if let Some(v) = read_unified_battery(dev, device_index, idx) {
-            return Some(v);
-        }
+        return read_unified_battery(dev, device_index, idx)
+            .map(|v| remember(device_index, note("unified(0x1004)", v)))
+            .or_else(|| recent(device_index));
     }
     if let Some(idx) = get_feature_index(dev, device_index, FEAT_BATTERY_STATUS) {
         if let Some(v) = read_battery_status(dev, device_index, idx) {
-            return Some(v);
+            return Some(remember(device_index, note("status(0x1000)", v)));
         }
     }
     // 0x1001 is voltage — skip as percent source.
     let _ = FEAT_BATTERY_VOLTAGE;
     read_hidpp10_battery(dev, device_index)
+        .map(|v| remember(device_index, note("hid++1.0(0x0D)", v)))
+        .or_else(|| recent(device_index))
 }
 
 /// 0x0005 DeviceNameAndType — the peripheral's own model name. A mouse paired
@@ -308,7 +377,7 @@ fn read_device_name(dev: &HidDevice, device_index: u8) -> Option<String> {
     msg[0] = LONG_ID;
     msg[1] = device_index;
     msg[2] = feat_index;
-    msg[3] = (0x00 << 4) | SW_ID; // getCount
+    msg[3] = call_byte(0x00); // getCount
     drain(dev);
     if !write_msg(dev, &msg) {
         return None;
@@ -326,7 +395,7 @@ fn read_device_name(dev: &HidDevice, device_index: u8) -> Option<String> {
         msg[0] = LONG_ID;
         msg[1] = device_index;
         msg[2] = feat_index;
-        msg[3] = (0x01 << 4) | SW_ID; // getDeviceName
+        msg[3] = call_byte(0x01); // getDeviceName
         msg[4] = name.len() as u8;
         drain(dev);
         if !write_msg(dev, &msg) {
@@ -379,7 +448,6 @@ fn probe_device(dev: &HidDevice, product: &str) -> Option<DeviceReading> {
     None
 }
 
-#[allow(dead_code)]
 pub fn receiver_present() -> bool {
     hid::with_api(|api| {
         api.device_list().any(|d| {
