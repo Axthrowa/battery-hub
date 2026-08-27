@@ -60,26 +60,32 @@ fn device_score(info: &DeviceInfo) -> i32 {
     score
 }
 
-fn parse_report05(buf: &[u8]) -> Option<u8> {
-    if buf.len() < 4 {
-        return None;
-    }
-    let (pad0, pad1, charge) = if buf[0] == 0x05 {
-        (buf[1], buf[2], buf[3])
+/// `00 00 <percent> 01 <charging> 01 02`, with the leading report ID present
+/// only on some reads.
+///
+/// The charging byte took three states to pin down, because the interesting
+/// one is not the obvious one: on the dock the mouse is off the air entirely
+/// and the receiver keeps serving whatever it last heard, so docked and
+/// undocked look alike apart from the level. Only a cable, which leaves the
+/// mouse awake and talking, moves this byte — 0 off the charger, 1 on it.
+fn parse_report05(buf: &[u8]) -> Option<(u8, bool)> {
+    let body = if buf.first() == Some(&0x05) {
+        buf.get(1..)?
     } else {
-        (buf[0], buf[1], buf[2])
+        buf
     };
-    if pad0 != 0 || pad1 != 0 {
+    if body.len() < 3 || body[0] != 0 || body[1] != 0 {
         return None;
     }
-    if (1..=100).contains(&charge) {
-        Some(charge)
-    } else {
-        None
+    let percent = body[2];
+    if !(1..=100).contains(&percent) {
+        return None;
     }
+    let charging = body.get(4).is_some_and(|flag| *flag != 0);
+    Some((percent, charging))
 }
 
-fn read_aj_series_battery(dev: &HidDevice) -> Option<u8> {
+fn read_aj_series_battery(dev: &HidDevice) -> Option<(u8, bool)> {
     for attempt in 0..4 {
         let mut poll = [0u8; 65];
         poll[0] = 0x00;
@@ -108,8 +114,8 @@ fn read_aj_series_battery(dev: &HidDevice) -> Option<u8> {
         let mut buf = [0u8; 65];
         buf[0] = 0x05;
         if let Ok(n) = dev.get_feature_report(&mut buf) {
-            if let Some(pct) = parse_report05(&buf[..n.max(4)]) {
-                return Some(pct);
+            if let Some(reading) = parse_report05(&buf[..n.max(8)]) {
+                return Some(reading);
             }
         }
     }
@@ -150,9 +156,9 @@ pub fn read() -> DeviceReading {
 
         for (_, path, product) in &ranked {
             if let Ok(dev) = api.open_path(path) {
-                if let Some(percent) = read_aj_series_battery(&dev) {
+                if let Some((percent, charging)) = read_aj_series_battery(&dev) {
                     let brand = Brand::classify("", product);
-                    return DeviceReading::ok(brand, product, "2.4 GHz", percent, false)
+                    return DeviceReading::ok(brand, product, "2.4 GHz", percent, charging)
                         .ranked(crate::devices::RANK_VENDOR)
                         .of_kind(crate::devices::DeviceKind::Mouse);
                 }
