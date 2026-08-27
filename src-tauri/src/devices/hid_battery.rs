@@ -214,7 +214,8 @@ pub fn read_all() -> Vec<DeviceReading> {
                 let transport = hid::transport_label(info);
                 out.push(
                     DeviceReading::ok(brand, product, transport, percent, charging)
-                        .ranked(super::RANK_DESCRIPTOR),
+                        .ranked(super::RANK_DESCRIPTOR)
+                        .measured_on(info.vendor_id(), info.product_id()),
                 );
             }
         }

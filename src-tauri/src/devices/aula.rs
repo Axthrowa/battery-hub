@@ -41,15 +41,19 @@ const REPORT_ID: u8 = 0x13;
 const PAYLOAD_LEN: usize = 19;
 const CMD_BATTERY: u8 = 0x4A;
 const CMD_UUID: u8 = 0x05;
-/// The receiver stays quiet through the first frame after the app opens it —
-/// the 2.4 GHz link has to be woken before the keyboard is reachable — and it
-/// drops the odd frame when queries arrive back to back. Both recover on a
-/// retry, so the budget is generous rather than the poll reporting a keyboard
-/// that is sitting right there switched on.
-const RETRIES: u32 = 5;
-const REPLY_WINDOW: Duration = Duration::from_millis(350);
-const RETRY_GAP: Duration = Duration::from_millis(100);
-const READ_SLICE_MS: i32 = 50;
+/// The receiver drops the odd frame — the 2.4 GHz link has to be woken before
+/// the keyboard is reachable — and recovers on a retry, so a few are worth
+/// spending. Not many, though: every one of them is time the refresh button
+/// spends waiting, and a keyboard that is genuinely switched off costs the
+/// whole budget on every poll.
+const RETRIES: u32 = 3;
+const REPLY_WINDOW: Duration = Duration::from_millis(250);
+const RETRY_GAP: Duration = Duration::from_millis(80);
+const READ_SLICE_MS: i32 = 40;
+/// Once a device has missed this many polls in a row it is treated as off and
+/// gets a single frame per poll, so a switched-off keyboard stops slowing every
+/// refresh down. One answer puts it straight back on the full budget.
+const QUIET_POLLS_BEFORE_BACKOFF: u32 = 3;
 
 /// The 2.4 GHz receiver reports one generic product string for every keyboard
 /// that pairs with it, so the model can only come from the keyboard itself.
@@ -73,6 +77,59 @@ fn model_cache() -> &'static Mutex<HashMap<(u16, u16), String>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Last reading that came back, per device.
+///
+/// The link is re-opened from scratch on every poll and drops the odd exchange
+/// even after the retries above. Reporting "no answer" on those polls hands the
+/// card back to whatever weaker source is describing the same keyboard — a
+/// taught byte, typically — and the percentage visibly flips between the two.
+/// A charge level does not move in the minutes a dropped frame costs, so the
+/// last real answer is served instead, stamped with when it was measured.
+const READING_TTL: Duration = Duration::from_secs(15 * 60);
+
+struct LastReading {
+    percent: u8,
+    at_ms: u64,
+}
+
+fn reading_cache() -> &'static Mutex<HashMap<(u16, u16), LastReading>> {
+    static CACHE: OnceLock<Mutex<HashMap<(u16, u16), LastReading>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Consecutive polls a device has failed to answer.
+fn quiet_polls() -> &'static Mutex<HashMap<(u16, u16), u32>> {
+    static QUIET: OnceLock<Mutex<HashMap<(u16, u16), u32>>> = OnceLock::new();
+    QUIET.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn retries_for(ids: (u16, u16)) -> u32 {
+    let quiet = quiet_polls()
+        .lock()
+        .ok()
+        .and_then(|q| q.get(&ids).copied())
+        .unwrap_or(0);
+    if quiet >= QUIET_POLLS_BEFORE_BACKOFF {
+        1
+    } else {
+        RETRIES
+    }
+}
+
+fn note_answer(ids: (u16, u16), answered: bool) {
+    if let Ok(mut quiet) = quiet_polls().lock() {
+        let entry = quiet.entry(ids).or_insert(0);
+        *entry = if answered { 0 } else { entry.saturating_add(1) };
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn checksum(bytes: &[u8]) -> u8 {
     let sum = bytes
         .iter()
@@ -92,7 +149,7 @@ fn frame(command: &[u8]) -> [u8; PAYLOAD_LEN] {
 /// The reply is only accepted when it echoes the opcode and its own checksum
 /// adds up, so an unrelated report sitting in the queue cannot be read as a
 /// state of charge.
-fn ask(dev: &HidDevice, command: &[u8], marker: u8) -> Option<Vec<u8>> {
+fn ask(dev: &HidDevice, command: &[u8], marker: u8, retries: u32) -> Option<Vec<u8>> {
     let payload = frame(command);
     let mut out = Vec::with_capacity(PAYLOAD_LEN + 1);
     out.push(REPORT_ID);
@@ -101,7 +158,7 @@ fn ask(dev: &HidDevice, command: &[u8], marker: u8) -> Option<Vec<u8>> {
     let mut seen = 0usize;
     let mut errors = 0usize;
     let mut empties = 0usize;
-    for attempt in 0..RETRIES {
+    for attempt in 0..retries {
         if attempt > 0 {
             thread::sleep(RETRY_GAP);
         }
@@ -144,21 +201,21 @@ fn ask(dev: &HidDevice, command: &[u8], marker: u8) -> Option<Vec<u8>> {
         }
     }
     diagnostics::emit_line(&format!(
-        "[aula] no reply to 0x{marker:02X} after {RETRIES} tries          ({seen} report(s), {empties} empty, {errors} error(s))"
+        "[aula] no reply to 0x{marker:02X} after {retries} tries          ({seen} report(s), {empties} empty, {errors} error(s))"
     ));
     None
 }
 
 /// State of charge, or `None` when the keyboard behind the receiver is off.
-fn battery(dev: &HidDevice) -> Option<u8> {
-    let data = ask(dev, &[CMD_BATTERY, 0, 0, 0], CMD_BATTERY)?;
+fn battery(dev: &HidDevice, retries: u32) -> Option<u8> {
+    let data = ask(dev, &[CMD_BATTERY, 0, 0, 0], CMD_BATTERY, retries)?;
     // data[1] is a status byte the configurator does not surface; left alone
     // rather than guessed at as a charging flag.
     data.first().copied().filter(|p| (1..=100).contains(p))
 }
 
 fn model(dev: &HidDevice) -> Option<&'static str> {
-    let data = ask(dev, &[CMD_UUID, 0x01, 0, 0, 0, 0, 0], CMD_UUID)?;
+    let data = ask(dev, &[CMD_UUID, 0x01, 0, 0, 0, 0, 0], CMD_UUID, RETRIES)?;
     if data.len() < 6 {
         return None;
     }
@@ -227,22 +284,60 @@ pub fn read_all() -> Vec<DeviceReading> {
             let _ = dev.set_blocking_mode(false);
 
             let transport = hid::transport_label(info);
-            match battery(&dev) {
+            let ids = (info.vendor_id(), info.product_id());
+            let answer = battery(&dev, retries_for(ids));
+            note_answer(ids, answer.is_some());
+            match answer {
                 Some(percent) => {
                     let name = label(&dev, info);
+                    if let Ok(mut cache) = reading_cache().lock() {
+                        cache.insert(
+                            ids,
+                            LastReading {
+                                percent,
+                                at_ms: now_ms(),
+                            },
+                        );
+                    }
                     out.push(
                         DeviceReading::ok(Brand::aula(), name, transport, percent, false)
-                            .ranked(RANK_VENDOR),
+                            .ranked(RANK_VENDOR)
+                            .measured_on(ids.0, ids.1),
                     );
                 }
-                // A silent link is normal for one poll after the app starts.
-                None => out.push(DeviceReading::failed(
-                    Brand::aula(),
-                    cached_label(info),
-                    transport,
-                    "Aula receiver found; waiting for the keyboard to answer.",
-                    true,
-                )),
+                None => {
+                    let recent = reading_cache().lock().ok().and_then(|cache| {
+                        cache.get(&ids).and_then(|last| {
+                            let age = now_ms().saturating_sub(last.at_ms);
+                            (age < READING_TTL.as_millis() as u64)
+                                .then_some((last.percent, last.at_ms))
+                        })
+                    });
+                    match recent {
+                        Some((percent, at_ms)) => out.push(
+                            DeviceReading::ok(
+                                Brand::aula(),
+                                cached_label(info),
+                                transport,
+                                percent,
+                                false,
+                            )
+                            .ranked(RANK_VENDOR)
+                            .measured_on(ids.0, ids.1)
+                            .measured_at(at_ms),
+                        ),
+                        None => out.push(
+                            DeviceReading::failed(
+                                Brand::aula(),
+                                cached_label(info),
+                                transport,
+                                "Aula receiver found; waiting for the keyboard to answer.",
+                                true,
+                            )
+                            .measured_on(ids.0, ids.1),
+                        ),
+                    }
+                }
             }
         }
         out

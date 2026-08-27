@@ -33,6 +33,9 @@ export interface DeviceReading {
   unverified: boolean;
   /** Which kind of source produced this: 40 vendor, 30 descriptor, 20 taught, 10 generic. */
   rank: number;
+  /** USB ids of the hardware, 0 where the reader cannot say. */
+  vendorId: number;
+  productId: number;
   updatedAtMs: number;
 }
 

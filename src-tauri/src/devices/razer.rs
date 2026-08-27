@@ -5,6 +5,7 @@ use super::{Brand, DeviceReading};
 use hidapi::{DeviceInfo, HidDevice};
 use std::cmp::Reverse;
 use std::ffi::CString;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -116,6 +117,25 @@ fn query_byte(dev: &HidDevice, cmd: u8, dongle: bool, timeout_ms: u64) -> Option
     }
 }
 
+/// Consecutive polls the headset has stayed silent.
+///
+/// A dongle left plugged into a desktop is the normal case, and a headset that
+/// is switched off answers none of these queries: at full timeouts that is
+/// three seconds burned on every poll, which is most of what the refresh button
+/// waits for. Once it is clearly off the same queries are asked briefly, and a
+/// single answer puts the full budget back.
+static SILENT_POLLS: AtomicU32 = AtomicU32::new(0);
+const SILENT_POLLS_BEFORE_BACKOFF: u32 = 3;
+
+/// Milliseconds to wait for one reply, given how long the headset has been off.
+fn budget(full: u64) -> u64 {
+    if SILENT_POLLS.load(Ordering::Relaxed) >= SILENT_POLLS_BEFORE_BACKOFF {
+        (full / 8).max(60)
+    } else {
+        full
+    }
+}
+
 fn try_open(dev: &HidDevice, product_id: u16) -> Option<DeviceReading> {
     let dongle = product_id == RAZER_PID_DONGLE;
 
@@ -124,14 +144,14 @@ fn try_open(dev: &HidDevice, product_id: u16) -> Option<DeviceReading> {
     let _ = write_report(dev, &wake);
     thread::sleep(Duration::from_millis(40));
 
-    let _ = query_byte(dev, CMD_LINK, dongle, 500);
+    let _ = query_byte(dev, CMD_LINK, dongle, budget(500));
 
-    let mut percent = query_byte(dev, CMD_BATTERY, dongle, 1200);
+    let mut percent = query_byte(dev, CMD_BATTERY, dongle, budget(1200));
     if percent.is_none() && dongle {
-        percent = query_byte(dev, CMD_BATTERY, false, 800);
+        percent = query_byte(dev, CMD_BATTERY, false, budget(800));
     }
     let percent = percent?;
-    let charging = query_byte(dev, CMD_CHARGING, dongle, 800).unwrap_or(0) > 0;
+    let charging = query_byte(dev, CMD_CHARGING, dongle, budget(800)).unwrap_or(0) > 0;
 
     Some(
         DeviceReading::ok(
@@ -192,6 +212,11 @@ pub fn read() -> DeviceReading {
         }
         None
     });
+
+    SILENT_POLLS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |seen| {
+        Some(if matches!(opened, Ok(Some(_))) { 0 } else { seen.saturating_add(1) })
+    })
+    .ok();
 
     match opened {
         Ok(Some(ok)) => ok,

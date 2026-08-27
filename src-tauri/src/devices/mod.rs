@@ -53,6 +53,11 @@ pub struct DeviceReading {
     pub unverified: bool,
     /// Which kind of source produced this, one of the `RANK_*` constants.
     pub rank: u8,
+    /// USB ids of the hardware behind the reading, `0` where a reader cannot
+    /// say (Bluetooth names, COM ports). Two sources describing the same ids
+    /// are the same device however differently they spell its name.
+    pub vendor_id: u16,
+    pub product_id: u16,
     pub updated_at_ms: u64,
 }
 
@@ -78,6 +83,8 @@ impl DeviceReading {
             taught: false,
             unverified: false,
             rank: RANK_GENERIC,
+            vendor_id: 0,
+            product_id: 0,
             updated_at_ms: now_ms(),
         }
     }
@@ -85,6 +92,20 @@ impl DeviceReading {
     /// Raise a reading above the generic default — see the `RANK_*` constants.
     pub fn ranked(mut self, rank: u8) -> Self {
         self.rank = rank;
+        self
+    }
+
+    /// Name the hardware this was read from, so sources can be matched by ids
+    /// rather than by how each of them happens to spell the product.
+    pub fn measured_on(mut self, vendor_id: u16, product_id: u16) -> Self {
+        self.vendor_id = vendor_id;
+        self.product_id = product_id;
+        self
+    }
+
+    /// When the value was actually measured, for readings served from a cache.
+    pub fn measured_at(mut self, at_ms: u64) -> Self {
+        self.updated_at_ms = at_ms;
         self
     }
 
@@ -127,6 +148,8 @@ impl DeviceReading {
             taught: false,
             unverified: false,
             rank: RANK_GENERIC,
+            vendor_id: 0,
+            product_id: 0,
             updated_at_ms: now_ms(),
         }
     }
@@ -252,6 +275,24 @@ fn push_unique(out: &mut Vec<DeviceReading>, device: DeviceReading) {
         return;
     }
     out.push(device);
+}
+
+/// A taught byte is a stand-in for a reader that did not exist yet. Once one
+/// does and it answers for the same hardware, drop the stand-in.
+///
+/// Matching is on USB ids, not on names: the two sources rarely spell a device
+/// alike — a receiver calls itself "2.4G Wireless Receiver" while the person
+/// who taught it typed the model on the box — so name matching leaves both on
+/// screen and the percentage appears to flip between them from poll to poll.
+fn drop_superseded_taught(readings: &mut Vec<DeviceReading>) {
+    let answered: Vec<(u16, u16)> = readings
+        .iter()
+        .filter(|d| d.ok && !d.taught && d.vendor_id != 0)
+        .map(|d| (d.vendor_id, d.product_id))
+        .collect();
+    readings.retain(|d| {
+        !(d.taught && d.vendor_id != 0 && answered.contains(&(d.vendor_id, d.product_id)))
+    });
 }
 
 fn is_specialized_transport(t: &str) -> bool {
@@ -388,6 +429,8 @@ pub fn read_all() -> DeviceSnapshot {
     let _ = h_n.join();
     let _ = h_u.join();
 
+    drop_superseded_taught(&mut merged);
+
     // Stable-ish order: OK first, then by brand label.
     merged.sort_by(|a, b| {
         b.ok.cmp(&a.ok)
@@ -504,6 +547,42 @@ mod tests {
         push_unique(&mut merged, windows_reading(50));
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].percent, Some(50));
+    }
+
+    /// The case the user hit: a receiver names itself one thing, the person who
+    /// taught it typed another, so nothing merges by name and both cards stay.
+    #[test]
+    fn a_taught_byte_goes_once_its_hardware_answers_even_under_another_name() {
+        let mut readings = vec![
+            DeviceReading::ok(Brand::new("aula"), "Aula F75", "2.4 GHz", 78, false)
+                .ranked(RANK_VENDOR)
+                .measured_on(0x3554, 0xFA09),
+            DeviceReading::taught(
+                Brand::new("aula"),
+                "2.4G Wireless Receiver",
+                "2.4 GHz",
+                92,
+                true,
+            )
+            .measured_on(0x3554, 0xFA09),
+        ];
+        drop_superseded_taught(&mut readings);
+        assert_eq!(readings.len(), 1);
+        assert_eq!(readings[0].percent, Some(78));
+    }
+
+    /// Teaching still carries hardware nothing else can read.
+    #[test]
+    fn a_taught_byte_stays_when_nothing_answers_for_it() {
+        let mut readings = vec![
+            DeviceReading::ok(Brand::new("razer"), "Headset", "2.4 GHz", 40, false)
+                .ranked(RANK_VENDOR)
+                .measured_on(0x1532, 0x0565),
+            DeviceReading::taught(Brand::new("aula"), "Keyboard", "2.4 GHz", 92, true)
+                .measured_on(0x3554, 0xFA09),
+        ];
+        drop_superseded_taught(&mut readings);
+        assert_eq!(readings.len(), 2);
     }
 
     #[test]

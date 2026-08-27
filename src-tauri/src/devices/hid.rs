@@ -8,6 +8,7 @@
 
 use hidapi::{BusType, DeviceInfo, HidApi, HidResult};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
 // RAZER — BlackShark V2 HyperSpeed (dongle + optional wired)
@@ -46,7 +47,12 @@ pub const AJAZZ_PID_OVERRIDE: Option<u16> = None;
 
 pub const AJAZZ_VIDS: &[u16] = &[
     0x3151, // AJAZZ 2.4G 8K (this machine)
-    0x3554, 0x258A, 0x1A2C, 0x093A, 0x18F8,
+    // 0x3554 and 0x258A were here until the Aula reader was written. Both are
+    // Compx, and this reader probes by writing 0xF7 frames to every candidate
+    // it can reach: aimed at an Aula receiver those frames leave its own
+    // request/response channel unable to answer, so the keyboard reads as
+    // silent while a mouse two entries up is reporting fine.
+    0x1A2C, 0x093A, 0x18F8,
 ];
 
 // ---------------------------------------------------------------------------
@@ -88,9 +94,35 @@ pub fn transport_label(info: &DeviceInfo) -> &'static str {
     }
 }
 
+/// Vendors a dedicated reader already speaks for.
+///
+/// Their hardware needs no teaching, and offering it anyway is actively
+/// harmful: the scan can only propose bytes that hold still, and on a keyboard
+/// whose charge lives behind a request/response frame the steady bytes are
+/// firmware constants. Someone picks the one nearest the real percentage and
+/// the app reports that number for good.
+pub fn covered_by_a_reader(vendor_id: u16) -> bool {
+    vendor_id == RAZER_VID
+        || vendor_id == LOGITECH_VID
+        || AJAZZ_VIDS.contains(&vendor_id)
+        || super::aula::AULA_VIDS.contains(&vendor_id)
+}
+
 fn hid_context() -> &'static Mutex<Option<HidApi>> {
     static CONTEXT: OnceLock<Mutex<Option<HidApi>>> = OnceLock::new();
     CONTEXT.get_or_init(|| Mutex::new(None))
+}
+
+/// Enumerating every HID interface means opening every one of them, and the
+/// readers run eight deep behind this lock: doing it per reader put the same
+/// hardware through it eight times a poll, which cost seconds and left 2.4 GHz
+/// receivers too busy to answer their own vendor frames. One sweep is enough
+/// for a whole round of readers.
+const ENUMERATION_TTL: Duration = Duration::from_secs(2);
+
+fn last_enumeration() -> &'static Mutex<Option<Instant>> {
+    static AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    AT.get_or_init(|| Mutex::new(None))
 }
 
 pub fn with_api<T>(f: impl FnOnce(&HidApi) -> T) -> Result<T, String> {
@@ -105,8 +137,18 @@ pub fn with_api<T>(f: impl FnOnce(&HidApi) -> T) -> Result<T, String> {
         }
     }
     let api = guard.as_mut().expect("initialised above");
-    if let Err(e) = refresh_device_list(api) {
-        return Err(format!("HID enumeration failed: {e}"));
+
+    let stale = last_enumeration()
+        .lock()
+        .map(|at| at.is_none_or(|at| at.elapsed() >= ENUMERATION_TTL))
+        .unwrap_or(true);
+    if stale {
+        if let Err(e) = refresh_device_list(api) {
+            return Err(format!("HID enumeration failed: {e}"));
+        }
+        if let Ok(mut at) = last_enumeration().lock() {
+            *at = Some(Instant::now());
+        }
     }
     Ok(f(api))
 }

@@ -230,13 +230,16 @@ pub fn read_all() -> Vec<DeviceReading> {
                 };
                 if let Some(percent) = device.percent(raw) {
                     let verified = note_observation(&device.id, payload);
-                    reading = Some(DeviceReading::taught(
-                        Brand::identify(device.vendor_id, "", &device.name),
-                        device.name.clone(),
-                        hid::transport_label(info),
-                        percent,
-                        verified,
-                    ));
+                    reading = Some(
+                        DeviceReading::taught(
+                            Brand::identify(device.vendor_id, "", &device.name),
+                            device.name.clone(),
+                            hid::transport_label(info),
+                            percent,
+                            verified,
+                        )
+                        .measured_on(device.vendor_id, device.product_id),
+                    );
                     break;
                 }
             }

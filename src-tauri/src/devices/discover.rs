@@ -199,13 +199,15 @@ fn sweep() -> Vec<Probe> {
                 continue;
             };
 
-            // A declared battery field means an automatic reader already has it.
+            // A declared battery field means an automatic reader already has
+            // it — and so does a vendor the specialized readers speak for.
             let mut raw = [0u8; 4096];
-            let automatic = dev
-                .get_report_descriptor(&mut raw)
-                .ok()
-                .map(|read| hid_descriptor::parse(&raw[..read.min(4096)]).has_battery())
-                .unwrap_or(false);
+            let automatic = hid::covered_by_a_reader(info.vendor_id())
+                || dev
+                    .get_report_descriptor(&mut raw)
+                    .ok()
+                    .map(|read| hid_descriptor::parse(&raw[..read.min(4096)]).has_battery())
+                    .unwrap_or(false);
 
             let id = format!("{:04X}:{:04X}", info.vendor_id(), info.product_id());
             let path = info.path().to_string_lossy().into_owned();

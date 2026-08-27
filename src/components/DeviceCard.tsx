@@ -2,6 +2,22 @@ import type { DeviceReading } from "../lib/bridge";
 import { BrandLogo, brandAccent } from "./BrandLogo";
 import { levelColor } from "./BatteryRing";
 
+/** Mains power, at the size of the percentage it sits next to. */
+function ChargingBolt({ color, title }: { color: string; title?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="ml-1.5 h-6 w-6 shrink-0 self-center"
+      fill={color}
+      role="img"
+      aria-label={title}
+    >
+      {title ? <title>{title}</title> : null}
+      <path d="M13.5 2 4 13.4h6.2L9.8 22 20 10.3h-6.6z" />
+    </svg>
+  );
+}
+
 interface DeviceCardProps {
   device: DeviceReading;
   index: number;
@@ -99,6 +115,9 @@ export function DeviceCard({
             {online && percent !== null ? percent : "—"}
           </span>
           <span className="mt-1 ml-1 text-sm font-medium text-neutral-500">%</span>
+          {online && device.charging ? (
+            <ChargingBolt color={color} title={chargingLabel} />
+          ) : null}
         </div>
         {online && device.unverified ? (
           <span
@@ -107,7 +126,7 @@ export function DeviceCard({
           >
             {unverifiedLabel}
           </span>
-        ) : device.charging && online ? (
+        ) : online && device.charging ? (
           <span className="text-xs font-medium" style={{ color }}>
             {chargingLabel}
           </span>
