@@ -31,6 +31,8 @@ export interface DeviceReading {
   taught: boolean;
   /** That byte has since stopped moving — shown, but not as a measurement. */
   unverified: boolean;
+  /** Which kind of source produced this: 40 vendor, 30 descriptor, 20 taught, 10 generic. */
+  rank: number;
   updatedAtMs: number;
 }
 

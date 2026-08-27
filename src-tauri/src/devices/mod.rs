@@ -1,6 +1,7 @@
 //! Multi-brand battery hub — specialized readers + generic Windows/BLE/HID discovery.
 
 mod ajazz;
+mod aula;
 mod brand;
 pub mod ble_gatt;
 pub mod diagnostics;
@@ -21,6 +22,17 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+/// What a reading is worth when two sources describe the same product.
+///
+/// Several readers can reach the same device at once — the vendor's own frame,
+/// the battery field in its descriptor, a byte the user pointed at, a value
+/// Windows cached when it last paired. They do not deserve equal weight, and
+/// picking by transport alone cannot separate two sources that share a radio.
+pub const RANK_GENERIC: u8 = 10;
+pub const RANK_TAUGHT: u8 = 20;
+pub const RANK_DESCRIPTOR: u8 = 30;
+pub const RANK_VENDOR: u8 = 40;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceReading {
@@ -39,6 +51,8 @@ pub struct DeviceReading {
     /// A taught byte that has stopped looking like a reading: same report, poll
     /// after poll, for hours. Shown, but not as a measurement.
     pub unverified: bool,
+    /// Which kind of source produced this, one of the `RANK_*` constants.
+    pub rank: u8,
     pub updated_at_ms: u64,
 }
 
@@ -63,14 +77,20 @@ impl DeviceReading {
             present: true,
             taught: false,
             unverified: false,
+            rank: RANK_GENERIC,
             updated_at_ms: now_ms(),
         }
     }
 
-    /// A reading from a location the user taught. Teaching a device only ever
-    /// happens because the automatic value was missing or wrong, so a confirmed
-    /// one outranks every generic reader for the same product — while one the
-    /// evidence has turned against stops outranking anything.
+    /// Raise a reading above the generic default — see the `RANK_*` constants.
+    pub fn ranked(mut self, rank: u8) -> Self {
+        self.rank = rank;
+        self
+    }
+
+    /// A reading from a location the user taught. It outranks what Windows
+    /// cached and what a byte scan guessed, but not a vendor's own frame: a
+    /// confirmed byte is still a byte someone recognised by sight.
     pub fn taught(
         brand: Brand,
         product: impl Into<String>,
@@ -79,8 +99,9 @@ impl DeviceReading {
         verified: bool,
     ) -> Self {
         Self {
-            taught: verified,
+            taught: true,
             unverified: !verified,
+            rank: RANK_TAUGHT,
             ..Self::ok(brand, product, transport, percent, false)
         }
     }
@@ -105,6 +126,7 @@ impl DeviceReading {
             present,
             taught: false,
             unverified: false,
+            rank: RANK_GENERIC,
             updated_at_ms: now_ms(),
         }
     }
@@ -210,15 +232,14 @@ fn push_unique(out: &mut Vec<DeviceReading>, device: DeviceReading) {
         // Prefer a successful SOC reading over presence-only / weaker sources.
         let replace = match (existing.ok, device.ok) {
             (false, true) => true,
-            (true, true) if existing.taught != device.taught => {
-                // A taught byte is re-read from the hardware on every poll. The
-                // generic sources it competes with — the cached Bluetooth
-                // battery property in particular — can sit on one value for
-                // days, which is exactly what the user taught around.
-                device.taught
+            (true, true) if existing.unverified != device.unverified => {
+                // A byte the evidence has turned against loses to anything that
+                // actually asked the hardware.
+                !device.unverified
             }
+            (true, true) if existing.rank != device.rank => device.rank > existing.rank,
             (true, true) => {
-                // Prefer specialized transports over generic Bluetooth when both OK.
+                // Same kind of source: prefer a dedicated radio over Bluetooth.
                 let ex_spec = is_specialized_transport(&existing.transport);
                 let new_spec = is_specialized_transport(&device.transport);
                 new_spec && !ex_spec
@@ -250,6 +271,7 @@ pub fn read_all() -> DeviceSnapshot {
     let (tx_g, rx_g) = std::sync::mpsc::channel();
     let (tx_h, rx_h) = std::sync::mpsc::channel();
     let (tx_u, rx_u) = std::sync::mpsc::channel();
+    let (tx_n, rx_n) = std::sync::mpsc::channel();
 
     let timings_razer = timings.clone();
     let h_r = thread::spawn(move || {
@@ -301,6 +323,13 @@ pub fn read_all() -> DeviceSnapshot {
         let _ = tx_h.send(value);
     });
 
+    let timings_aula = timings.clone();
+    let h_n = thread::spawn(move || {
+        let started = Instant::now();
+        let value = aula::read_all();
+        record(&timings_aula, "aula", started);
+        let _ = tx_n.send(value);
+    });
     let timings_learned = timings.clone();
     let h_u = thread::spawn(move || {
         let started = Instant::now();
@@ -338,6 +367,11 @@ pub fn read_all() -> DeviceSnapshot {
             push_unique(&mut merged, d);
         }
     }
+    if let Ok(list) = rx_n.recv() {
+        for d in list {
+            push_unique(&mut merged, d);
+        }
+    }
     if let Ok(list) = rx_u.recv() {
         for d in list {
             push_unique(&mut merged, d);
@@ -351,6 +385,7 @@ pub fn read_all() -> DeviceSnapshot {
     let _ = h_w.join();
     let _ = h_g.join();
     let _ = h_h.join();
+    let _ = h_n.join();
     let _ = h_u.join();
 
     // Stable-ish order: OK first, then by brand label.
@@ -397,10 +432,89 @@ pub fn read_all() -> DeviceSnapshot {
 }
 
 pub fn any_radio_present() -> bool {
-    razer::dongle_present() || logitech::receiver_present() || ajazz::receiver_present()
+    razer::dongle_present()
+        || logitech::receiver_present()
+        || ajazz::receiver_present()
+        || aula::receiver_present()
 }
 
 /// Primary device across every brand — not just the Razer link.
 pub fn read_battery() -> BatteryReading {
     read_all().primary
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn taught_reading(percent: u8, verified: bool) -> DeviceReading {
+        DeviceReading::taught(
+            Brand::new("aula"),
+            "Aula F75",
+            "2.4 GHz",
+            percent,
+            verified,
+        )
+    }
+
+    fn vendor_reading(percent: u8) -> DeviceReading {
+        DeviceReading::ok(Brand::new("aula"), "Aula F75", "2.4 GHz", percent, false)
+            .ranked(RANK_VENDOR)
+    }
+
+    fn windows_reading(percent: u8) -> DeviceReading {
+        DeviceReading::ok(Brand::new("aula"), "Aula F75", "Bluetooth", percent, false)
+    }
+
+    /// The vendor frame is the hardware answering for itself; a taught byte is
+    /// a location someone recognised by sight. Order must not depend on which
+    /// reader happened to finish first.
+    #[test]
+    fn vendor_frame_beats_a_taught_byte_either_way_round() {
+        let mut merged = Vec::new();
+        push_unique(&mut merged, vendor_reading(80));
+        push_unique(&mut merged, taught_reading(92, true));
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].percent, Some(80));
+
+        let mut merged = Vec::new();
+        push_unique(&mut merged, taught_reading(92, true));
+        push_unique(&mut merged, vendor_reading(80));
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].percent, Some(80));
+    }
+
+    /// What the user confirmed still beats a value Windows cached when the
+    /// device last paired — that is the case teaching exists for.
+    #[test]
+    fn a_taught_byte_beats_a_cached_windows_value() {
+        let mut merged = Vec::new();
+        push_unique(&mut merged, windows_reading(50));
+        push_unique(&mut merged, taught_reading(92, true));
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].percent, Some(92));
+    }
+
+    /// Once the evidence says the taught byte never moves, it stops winning.
+    #[test]
+    fn an_unverified_byte_loses_to_everything() {
+        let mut merged = Vec::new();
+        push_unique(&mut merged, taught_reading(92, false));
+        push_unique(&mut merged, windows_reading(50));
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].percent, Some(50));
+    }
+
+    #[test]
+    fn a_reading_replaces_a_presence_only_entry() {
+        let mut merged = Vec::new();
+        push_unique(
+            &mut merged,
+            DeviceReading::failed(Brand::new("aula"), "Aula F75", "2.4 GHz", "asleep", true),
+        );
+        push_unique(&mut merged, vendor_reading(80));
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].percent, Some(80));
+    }
 }

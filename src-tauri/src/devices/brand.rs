@@ -57,11 +57,60 @@ impl Brand {
     pub fn ajazz() -> Self {
         Self::new("ajazz")
     }
+    pub fn aula() -> Self {
+        Self::new("aula")
+    }
     pub fn soundcore() -> Self {
         Self::new("soundcore")
     }
     pub fn generic() -> Self {
         Self::new("generic")
+    }
+
+    /// USB vendor IDs, which say who built the hardware even when the strings
+    /// do not. A 2.4 GHz receiver almost always names itself after the radio
+    /// ("2.4G Wireless Receiver", "USB Gaming Mouse") and leaves the
+    /// manufacturer field to the chipset house, so guessing a brand from those
+    /// strings is how a keyboard ends up filed under "Cx" or "4G".
+    const VENDOR_IDS: &[(u16, &str)] = &[
+        (0x1532, "razer"),
+        (0x046D, "logitech"),
+        (0x3151, "ajazz"),
+        (0x3554, "aula"),
+        (0x258A, "aula"),
+        (0x372E, "aula"),
+        (0x1038, "steelseries"),
+        (0x1B1C, "corsair"),
+        (0x0951, "hyperx"),
+        (0x03F0, "hp"),
+        (0x045E, "microsoft"),
+        (0x05AC, "apple"),
+        (0x054C, "sony"),
+        (0x0B05, "asus"),
+        (0x28DA, "glorious"),
+        (0x3367, "keychron"),
+        (0x3434, "keychron"),
+        (0x320F, "akko"),
+        (0x24AE, "redragon"),
+        (0x24F0, "redragon"),
+        (0x2717, "xiaomi"),
+        (0x25A7, "rapoo"),
+        (0x2EA8, "pulsar"),
+        (0x291A, "anker"),
+    ];
+
+    /// Who built the hardware, from the USB vendor ID alone.
+    pub fn from_vendor_id(vendor_id: u16) -> Option<Self> {
+        Self::VENDOR_IDS
+            .iter()
+            .find(|(id, _)| *id == vendor_id)
+            .map(|(_, slug)| Self::new(*slug))
+    }
+
+    /// The vendor ID when it is known, the strings otherwise. Prefer this over
+    /// `classify` wherever a vendor ID is in reach.
+    pub fn identify(vendor_id: u16, manufacturer: &str, product: &str) -> Self {
+        Self::from_vendor_id(vendor_id).unwrap_or_else(|| Self::classify(manufacturer, product))
     }
 
     /// Infer brand from manufacturer / product strings (any vendor).

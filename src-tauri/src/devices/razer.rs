@@ -133,13 +133,16 @@ fn try_open(dev: &HidDevice, product_id: u16) -> Option<DeviceReading> {
     let percent = percent?;
     let charging = query_byte(dev, CMD_CHARGING, dongle, 800).unwrap_or(0) > 0;
 
-    Some(DeviceReading::ok(
-        Brand::razer(),
-        PRODUCT_NAME,
-        if dongle { "2.4 GHz" } else { "USB" },
-        percent.min(100),
-        charging,
-    ))
+    Some(
+        DeviceReading::ok(
+            Brand::razer(),
+            PRODUCT_NAME,
+            if dongle { "2.4 GHz" } else { "USB" },
+            percent.min(100),
+            charging,
+        )
+        .ranked(crate::devices::RANK_VENDOR),
+    )
 }
 
 /// Cheap presence probe: enumerates our VID/PIDs without talking to the headset.

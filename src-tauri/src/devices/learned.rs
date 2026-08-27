@@ -231,7 +231,7 @@ pub fn read_all() -> Vec<DeviceReading> {
                 if let Some(percent) = device.percent(raw) {
                     let verified = note_observation(&device.id, payload);
                     reading = Some(DeviceReading::taught(
-                        Brand::classify("", &device.name),
+                        Brand::identify(device.vendor_id, "", &device.name),
                         device.name.clone(),
                         hid::transport_label(info),
                         percent,
@@ -242,7 +242,7 @@ pub fn read_all() -> Vec<DeviceReading> {
             }
             out.push(reading.unwrap_or_else(|| {
                 DeviceReading::failed(
-                    Brand::classify("", &device.name),
+                    Brand::identify(device.vendor_id, "", &device.name),
                     device.name.clone(),
                     "HID",
                     "Taught device is not connected.",
