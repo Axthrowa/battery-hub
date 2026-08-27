@@ -17,6 +17,9 @@ export interface BatteryReading {
 /** Brand slug from the backend (razer, logitech, steelseries, …). */
 export type DeviceBrand = string;
 
+/** What a device is, when nobody has given it artwork. */
+export type DeviceKind = "keyboard" | "mouse" | "headset" | "device";
+
 export interface DeviceReading {
   brand: DeviceBrand;
   brandLabel: string;
@@ -36,6 +39,8 @@ export interface DeviceReading {
   /** USB ids of the hardware, 0 where the reader cannot say. */
   vendorId: number;
   productId: number;
+  /** What the device is, for placeholder artwork. */
+  kind: DeviceKind;
   updatedAtMs: number;
 }
 

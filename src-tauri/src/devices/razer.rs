@@ -161,7 +161,8 @@ fn try_open(dev: &HidDevice, product_id: u16) -> Option<DeviceReading> {
             percent.min(100),
             charging,
         )
-        .ranked(crate::devices::RANK_VENDOR),
+        .ranked(crate::devices::RANK_VENDOR)
+        .of_kind(crate::devices::DeviceKind::Headset),
     )
 }
 

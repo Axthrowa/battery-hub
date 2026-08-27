@@ -153,7 +153,8 @@ pub fn read() -> DeviceReading {
                 if let Some(percent) = read_aj_series_battery(&dev) {
                     let brand = Brand::classify("", product);
                     return DeviceReading::ok(brand, product, "2.4 GHz", percent, false)
-                        .ranked(crate::devices::RANK_VENDOR);
+                        .ranked(crate::devices::RANK_VENDOR)
+                        .of_kind(crate::devices::DeviceKind::Mouse);
                 }
             }
         }

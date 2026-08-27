@@ -198,6 +198,15 @@ pub fn read_all() -> Vec<DeviceReading> {
     let result = hid::with_api(|api| {
         let mut out = Vec::with_capacity(devices.len());
         for device in &devices {
+            // Hardware a dedicated reader speaks for is not merely better read
+            // that way — polling the taught byte actively breaks it. An Aula
+            // receiver answers its charge over one vendor collection and holds
+            // the taught constant in another, and a feature request to the
+            // second leaves the first unable to reply: the keyboard reads as
+            // absent while the byte that is not a charge level reports on.
+            if hid::covered_by_a_reader(device.vendor_id) {
+                continue;
+            }
             // One product usually publishes several collections behind the same
             // usage page, and only one of them carries the report the scan read.
             // Picking whichever the enumeration happened to list first lands on
@@ -238,7 +247,12 @@ pub fn read_all() -> Vec<DeviceReading> {
                             percent,
                             verified,
                         )
-                        .measured_on(device.vendor_id, device.product_id),
+                        .measured_on(device.vendor_id, device.product_id)
+                        .of_kind(super::DeviceKind::infer(
+                            info.usage_page(),
+                            info.usage(),
+                            &device.name,
+                        )),
                     );
                     break;
                 }

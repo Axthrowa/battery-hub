@@ -20,7 +20,7 @@
 
 use super::diagnostics;
 use super::hid;
-use super::{Brand, DeviceReading, RANK_VENDOR};
+use super::{Brand, DeviceKind, DeviceReading, RANK_VENDOR};
 use hidapi::{DeviceInfo, HidDevice};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -41,6 +41,11 @@ const REPORT_ID: u8 = 0x13;
 const PAYLOAD_LEN: usize = 19;
 const CMD_BATTERY: u8 = 0x4A;
 const CMD_UUID: u8 = 0x05;
+/// Byte after the charge level. `0x01` while the keyboard runs off its own
+/// battery, `0x10` on the cable — watched across a charge that walked the level
+/// up 79, 81, 82 with the bit set the whole way, and every reading taken off
+/// the cable before that showed `0x01`.
+const STATUS_CHARGING: u8 = 0x10;
 /// The receiver drops the odd frame — the 2.4 GHz link has to be woken before
 /// the keyboard is reachable — and recovers on a retry, so a few are worth
 /// spending. Not many, though: every one of them is time the refresh button
@@ -89,6 +94,7 @@ const READING_TTL: Duration = Duration::from_secs(15 * 60);
 
 struct LastReading {
     percent: u8,
+    charging: bool,
     at_ms: u64,
 }
 
@@ -206,12 +212,13 @@ fn ask(dev: &HidDevice, command: &[u8], marker: u8, retries: u32) -> Option<Vec<
     None
 }
 
-/// State of charge, or `None` when the keyboard behind the receiver is off.
-fn battery(dev: &HidDevice, retries: u32) -> Option<u8> {
+/// State of charge and whether it is on the cable, or `None` when the keyboard
+/// behind the receiver is off.
+fn battery(dev: &HidDevice, retries: u32) -> Option<(u8, bool)> {
     let data = ask(dev, &[CMD_BATTERY, 0, 0, 0], CMD_BATTERY, retries)?;
-    // data[1] is a status byte the configurator does not surface; left alone
-    // rather than guessed at as a charging flag.
-    data.first().copied().filter(|p| (1..=100).contains(p))
+    let percent = data.first().copied().filter(|p| (1..=100).contains(p))?;
+    let charging = data.get(1).is_some_and(|status| status & STATUS_CHARGING != 0);
+    Some((percent, charging))
 }
 
 fn model(dev: &HidDevice) -> Option<&'static str> {
@@ -288,20 +295,22 @@ pub fn read_all() -> Vec<DeviceReading> {
             let answer = battery(&dev, retries_for(ids));
             note_answer(ids, answer.is_some());
             match answer {
-                Some(percent) => {
+                Some((percent, charging)) => {
                     let name = label(&dev, info);
                     if let Ok(mut cache) = reading_cache().lock() {
                         cache.insert(
                             ids,
                             LastReading {
                                 percent,
+                                charging,
                                 at_ms: now_ms(),
                             },
                         );
                     }
                     out.push(
-                        DeviceReading::ok(Brand::aula(), name, transport, percent, false)
+                        DeviceReading::ok(Brand::aula(), name, transport, percent, charging)
                             .ranked(RANK_VENDOR)
+                            .of_kind(DeviceKind::Keyboard)
                             .measured_on(ids.0, ids.1),
                     );
                 }
@@ -309,20 +318,24 @@ pub fn read_all() -> Vec<DeviceReading> {
                     let recent = reading_cache().lock().ok().and_then(|cache| {
                         cache.get(&ids).and_then(|last| {
                             let age = now_ms().saturating_sub(last.at_ms);
-                            (age < READING_TTL.as_millis() as u64)
-                                .then_some((last.percent, last.at_ms))
+                            (age < READING_TTL.as_millis() as u64).then_some((
+                                last.percent,
+                                last.charging,
+                                last.at_ms,
+                            ))
                         })
                     });
                     match recent {
-                        Some((percent, at_ms)) => out.push(
+                        Some((percent, charging, at_ms)) => out.push(
                             DeviceReading::ok(
                                 Brand::aula(),
                                 cached_label(info),
                                 transport,
                                 percent,
-                                false,
+                                charging,
                             )
                             .ranked(RANK_VENDOR)
+                            .of_kind(DeviceKind::Keyboard)
                             .measured_on(ids.0, ids.1)
                             .measured_at(at_ms),
                         ),
@@ -334,6 +347,7 @@ pub fn read_all() -> Vec<DeviceReading> {
                                 "Aula receiver found; waiting for the keyboard to answer.",
                                 true,
                             )
+                            .of_kind(DeviceKind::Keyboard)
                             .measured_on(ids.0, ids.1),
                         ),
                     }

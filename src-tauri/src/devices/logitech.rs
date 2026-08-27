@@ -370,8 +370,9 @@ fn probe_device(dev: &HidDevice, product: &str) -> Option<DeviceReading> {
                 .filter(|found| !is_receiver_name(found))
                 .unwrap_or_else(|| fallback_label(product));
             return Some(
-                DeviceReading::ok(Brand::classify("Logitech", &name), name, "2.4 GHz", percent, charging)
-                    .ranked(crate::devices::RANK_VENDOR),
+                DeviceReading::ok(Brand::classify("Logitech", &name), &name, "2.4 GHz", percent, charging)
+                    .ranked(crate::devices::RANK_VENDOR)
+                    .of_kind(crate::devices::DeviceKind::from_name(&name)),
             );
         }
     }

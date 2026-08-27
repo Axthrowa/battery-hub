@@ -390,9 +390,10 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>) {
         for d in &snapshot.devices {
             let line = match (d.ok, d.percent) {
                 (true, Some(p)) => format!(
-                    "[poll] {} OK {}%{} ({}) {}",
+                    "[poll] {} OK {}%{}{} ({}) {}",
                     d.brand.label(),
                     p,
+                    if d.charging { " CHARGING" } else { "" },
                     if d.unverified { " UNVERIFIED" } else { "" },
                     d.transport,
                     d.product

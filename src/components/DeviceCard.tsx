@@ -72,6 +72,7 @@ export function DeviceCard({
       <div className="mb-3 flex items-start gap-3">
         <BrandLogo
           brand={device.brand}
+          kind={device.kind}
           size={20}
           logo={logo}
           onPick={onPickLogo}

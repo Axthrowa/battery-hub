@@ -9,6 +9,7 @@ pub mod discover;
 pub mod hid;
 mod hid_battery;
 mod hid_descriptor;
+mod kind;
 pub mod learned;
 mod logitech;
 mod razer;
@@ -16,6 +17,7 @@ pub mod soundcore;
 mod windows_battery;
 
 pub use brand::Brand;
+pub use kind::DeviceKind;
 
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -58,6 +60,9 @@ pub struct DeviceReading {
     /// are the same device however differently they spell its name.
     pub vendor_id: u16,
     pub product_id: u16,
+    /// Keyboard, mouse, headset — what to draw when nobody has given the
+    /// device artwork and its brand has no logo.
+    pub kind: DeviceKind,
     pub updated_at_ms: u64,
 }
 
@@ -85,6 +90,7 @@ impl DeviceReading {
             rank: RANK_GENERIC,
             vendor_id: 0,
             product_id: 0,
+            kind: DeviceKind::Device,
             updated_at_ms: now_ms(),
         }
     }
@@ -106,6 +112,12 @@ impl DeviceReading {
     /// When the value was actually measured, for readings served from a cache.
     pub fn measured_at(mut self, at_ms: u64) -> Self {
         self.updated_at_ms = at_ms;
+        self
+    }
+
+    /// What the device is, for the placeholder artwork.
+    pub fn of_kind(mut self, kind: DeviceKind) -> Self {
+        self.kind = kind;
         self
     }
 
@@ -150,6 +162,7 @@ impl DeviceReading {
             rank: RANK_GENERIC,
             vendor_id: 0,
             product_id: 0,
+            kind: DeviceKind::Device,
             updated_at_ms: now_ms(),
         }
     }
