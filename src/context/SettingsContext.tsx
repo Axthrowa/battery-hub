@@ -52,6 +52,19 @@ function paint(theme: Theme, accent: string) {
   root.dataset.theme = theme === "system" ? (prefersDark() ? "dark" : "light") : theme;
   root.style.setProperty("--bh-accent", accent);
 }
+
+/**
+ * Paint what was stored before React renders anything.
+ *
+ * Settings arrive asynchronously — localStorage first, then the Tauri store —
+ * and an effect only runs after the first frame is on screen. Someone who chose
+ * the light theme would watch the panel open dark and flip, every launch. The
+ * stored value is enough to get the first frame right.
+ */
+export function applyStoredTheme() {
+  const stored = readLocal();
+  paint(stored.theme, stored.accent);
+}
 const STORE_FILE = "settings.json";
 const STORE_KEY = "settings";
 
@@ -109,7 +122,7 @@ function writeLocal(settings: Settings) {
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const { i18n, t } = useTranslation();
-  const [settings, setSettings] = useState<Settings>(DEFAULTS);
+  const [settings, setSettings] = useState<Settings>(readLocal);
   const [ready, setReady] = useState(false);
   const storeRef = useRef<StoreHandle | null>(null);
 

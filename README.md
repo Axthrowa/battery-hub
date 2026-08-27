@@ -159,6 +159,29 @@ Two things that are easy to get wrong here:
 - The GNU target cannot link the `cdylib`, so build the `--bin` target on its
   own, and copy `WebView2Loader.dll` from the target directory next to the exe.
 
+## Building in Docker
+
+The GNU target links with mingw and never touches a Windows toolchain, so the
+whole build runs on Linux — which makes a container a usable build box for a
+Windows-only app, and a reproducible one:
+
+```bash
+docker build -f docker/Dockerfile --target artifact --output out .
+```
+
+That leaves `battery-hub.exe` and `WebView2Loader.dll` in `./out`. Both still
+need signing on Windows afterwards, and signing does not get them past Smart
+App Control — see the section above for what does.
+
+`--target test` runs clippy against the Windows target instead of emitting the
+binary, which is the useful thing to put in CI.
+
+What the container cannot do is **run** the result. The app wants a desktop
+session for its WebView2 window and its tray icon, and direct HID and Bluetooth
+access to the receivers whose batteries it reads. Containers give it none of
+those, and the hardware in question is plugged into the host anyway. Docker is
+a build box here, not a test bench.
+
 ## Installing
 
 `npm run tauri:build` produces the NSIS installer, and once it is signed Smart
