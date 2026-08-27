@@ -148,7 +148,18 @@ def read_aula(handle, info):
 
 
 def read_ajazz(handle, info):
-    """SET_FEATURE F7 wakes telemetry, GET_FEATURE 05 -> `00 00 pct 01 chg`."""
+    """SET_FEATURE F7 wakes telemetry, GET_FEATURE 05 -> `00 00 pct 01 link`.
+
+    The fifth byte is not a charging flag, whatever it looks like: it says
+    whether the mouse is on the 2.4 GHz link. `00` while it is talking, `01`
+    the moment it goes quiet -- and the receiver then repeats the last frame it
+    heard for as long as the mouse stays away. Reading that byte as "charging"
+    is what put a bolt on a mouse sitting switched off in a drawer.
+
+    Returns (percent, on_air). There is no charging indicator here at all: a
+    cable takes the mouse off the radio, so the one state in which it is
+    charging is the one state in which it cannot say so.
+    """
     n = info["feat_len"]
     for attempt in range(4):
         poll = C.create_string_buffer(bytes([0x00, 0xF7]) + b"\x00" * (n - 2), n)
@@ -161,7 +172,7 @@ def read_ajazz(handle, info):
         raw = bytes(buf.raw)
         body = raw[1:] if raw[0] == 0x05 else raw
         if len(body) >= 5 and body[0] == 0 and body[1] == 0 and 1 <= body[2] <= 100:
-            return body[2], body[4] != 0, body[:7]
+            return body[2], body[4] == 0, body[:7]
     return None
 
 
@@ -203,7 +214,16 @@ def main():
                 if not got:
                     print(f"{stamp}  {LABELS[kind]:<24}    -   no answer")
                     continue
-                percent, charging, raw = got
+                percent, second, raw = got
+                extra = f"   {hp.hexs(raw)}" if show_raw else ""
+                if kind == "ajazz" and not second:
+                    # Off the link: the level beside the flag belongs to
+                    # whenever the mouse last spoke, so the app drops the card
+                    # rather than standing an hours-old number on the panel.
+                    watches.pop(kind, None)
+                    print(f"{stamp}  {LABELS[kind]:<24}    -   off the link (card hidden){extra}")
+                    continue
+                charging = second and kind != "ajazz"
                 if charging:
                     if kind not in watches:
                         watches[kind] = Watch(percent, now)
@@ -211,9 +231,7 @@ def main():
                 else:
                     watches.pop(kind, None)
                     state = "on battery"
-                extra = f"   {hp.hexs(raw)}" if show_raw else ""
-                flag = " (device says charging)" if charging and state == DISBELIEVED else ""
-                print(f"{stamp}  {LABELS[kind]:<24} {percent:3d}%   {state}{flag}{extra}")
+                print(f"{stamp}  {LABELS[kind]:<24} {percent:3d}%   {state}{extra}")
             if not count or rounds < count:
                 time.sleep(gap)
     except KeyboardInterrupt:
