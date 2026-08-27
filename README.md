@@ -148,23 +148,26 @@ Two things that are easy to get wrong here:
 - The GNU target cannot link the `cdylib`, so build the `--bin` target on its
   own, and copy `WebView2Loader.dll` from the target directory next to the exe.
 
-## Installing when the NSIS installer is blocked
+## Installing
 
-Signing clears Smart App Control for the executable, but not for the installer:
-a signed NSIS setup is refused every time, while the same certificate on the
-plain exe is accepted. Self-extracting installers are their own reputation
-category, and one nobody has vouched for does not get in.
+`npm run tauri:build` produces the NSIS installer, and once it is signed Smart
+App Control runs it like any other signed binary. Sign the installer as well as
+the executable inside it — SAC judges each file on its own, so an unsigned
+installer wrapping a signed exe still gets refused.
 
-`scripts/install/` is the way around it — plain PowerShell, so there is no new
-image for SAC to judge. Copy the signed `battery-hub.exe`, `WebView2Loader.dll`
-and the four files from that directory into one folder and run `Kur.cmd`. It
-installs to `%LOCALAPPDATA%\Battery Hub`, creates the Start Menu entry and the
-Add/Remove Programs entry, and drops `Kaldir.cmd` next to the binary for
-uninstalling. Neither script touches `devices.json` or the settings store.
+`scripts/install/` does the same job in plain PowerShell, for the times a fresh
+installer is still waiting on its verdict. Copy the signed `battery-hub.exe`,
+`WebView2Loader.dll` and the four files from that directory into one folder and
+run `Kur.cmd`. It installs to `%LOCALAPPDATA%\Battery Hub`, creates the Start
+Menu entry and the Add/Remove Programs entry, and drops `Kaldir.cmd` next to
+the binary for uninstalling. Neither script touches `devices.json` or the
+settings store.
 
-Note that SAC decides per file hash and asks its cloud service first, so a
-freshly signed binary is refused for a minute or two before it is allowed.
-A block right after building is not a signing problem — wait and start it again.
+SAC decides per file hash and asks its cloud service first, so anything freshly
+signed is refused for a minute or two before it is allowed. Retrying every few
+seconds keeps hitting the same pending verdict and reads exactly like a
+permanent block — leave half a minute between attempts before concluding
+anything about a new binary.
 
 ## Probing a device without building anything
 
