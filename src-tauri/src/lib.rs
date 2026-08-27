@@ -34,6 +34,13 @@ const ARG_REQUIRE_DONGLE: &str = "--require-dongle";
 const ARG_SCAN_DEVICES: &str = "--scan-devices";
 /// Per-device low-battery threshold (exclusive: notify when percent < this).
 const LOW_BATTERY_THRESHOLD: u8 = 20;
+/// A sound the user supplied, kept beside the settings so it survives an
+/// upgrade, and named plainly because a person may well go looking for it.
+const SOUND_FILE: &str = "notification.wav";
+/// Enough for any notification chime, and small enough that a wrong file
+/// cannot fill the disk: a WAV this size is over a minute of CD audio.
+const SOUND_FILE_MAX: usize = 5 * 1024 * 1024;
+
 /// Windows' own notification chime. The name is the bare one the toast builder
 /// parses — an `ms-winsoundevent:` URI does not match and is silently dropped.
 /// Naming no sound at all is not the same thing: a toast built without one is
@@ -421,6 +428,69 @@ fn register_toast_identity(app: &AppHandle) {
     }
 }
 
+fn sound_file_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("APPDATA"))
+        .map(std::path::PathBuf::from)?;
+    let dir = base.join("Battery Hub");
+    let _ = std::fs::create_dir_all(&dir);
+    Some(dir.join(SOUND_FILE))
+}
+
+/// Play a chosen sound file, if there is one, and say whether it was played.
+///
+/// Windows' toast XML can only name sounds the shell already knows, and a file
+/// on disk is not one of them for an app that is not packaged: pointing a toast
+/// at a path leaves it silent, without an error. So the toast is raised silent
+/// on purpose and the file is played beside it, which from the other side of
+/// the speakers is the same notification either way.
+#[cfg(windows)]
+fn play_sound_file() -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "winmm")]
+    unsafe extern "system" {
+        fn PlaySoundW(sound: *const u16, module: isize, flags: u32) -> i32;
+    }
+    const SND_ASYNC: u32 = 0x0001;
+    const SND_NODEFAULT: u32 = 0x0002;
+    const SND_FILENAME: u32 = 0x0002_0000;
+
+    let Some(path) = sound_file_path().filter(|p| p.is_file()) else {
+        return false;
+    };
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // Asynchronous on purpose: a poll thread must not wait on a speaker.
+    unsafe { PlaySoundW(wide.as_ptr(), 0, SND_FILENAME | SND_ASYNC | SND_NODEFAULT) != 0 }
+}
+
+#[cfg(not(windows))]
+fn play_sound_file() -> bool {
+    false
+}
+
+/// Give a toast its sound, whichever kind is in force.
+///
+/// A chosen file is played here and the toast is left silent; otherwise the
+/// toast carries Windows' own chime. Either way the caller just builds and
+/// shows it.
+fn with_sound<R: tauri::Runtime>(
+    shared: &Shared,
+    builder: tauri_plugin_notification::NotificationBuilder<R>,
+) -> tauri_plugin_notification::NotificationBuilder<R> {
+    if !shared.notify_sound.load(Ordering::Relaxed) {
+        return builder;
+    }
+    if play_sound_file() {
+        return builder;
+    }
+    builder.sound(NOTIFICATION_SOUND)
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -469,10 +539,10 @@ fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
             device.product.clone()
         };
         let body = format!("{product} low battery");
-        let mut toast = app.notification().builder().title("Battery Hub").body(&body);
-        if shared.notify_sound.load(Ordering::Relaxed) {
-            toast = toast.sound(NOTIFICATION_SOUND);
-        }
+        let toast = with_sound(
+            shared,
+            app.notification().builder().title("Battery Hub").body(&body),
+        );
         match toast.show() {
             Ok(()) => {
                 devices::diagnostics::emit_line(&format!("[notify] sent: {body} ({percent}%)"))
@@ -613,10 +683,7 @@ fn notify_full_charge(
                 format!("{product} is fully charged"),
             )
         };
-        let mut toast = app.notification().builder().title(title).body(&body);
-        if shared.notify_sound.load(Ordering::Relaxed) {
-            toast = toast.sound(NOTIFICATION_SOUND);
-        }
+        let toast = with_sound(shared, app.notification().builder().title(title).body(&body));
         match toast.show() {
             Ok(()) => devices::diagnostics::emit_line(&format!("[notify] sent: {body}")),
             Err(err) => {
@@ -873,6 +940,49 @@ fn set_notification_sound(state: State<'_, Arc<Shared>>, enabled: bool) {
     state.notify_sound.store(enabled, Ordering::Relaxed);
 }
 
+/// Store a sound the user picked, or clear it when given nothing.
+#[tauri::command]
+fn set_notification_sound_file(data: Option<Vec<u8>>) -> Result<bool, String> {
+    let path = sound_file_path().ok_or("No writable app data directory.")?;
+    match data {
+        Some(bytes) => {
+            if bytes.is_empty() {
+                return Err("The file is empty.".into());
+            }
+            if bytes.len() > SOUND_FILE_MAX {
+                return Err("The file is larger than 5 MB.".into());
+            }
+            // RIFF/WAVE is what PlaySound plays; anything else would be stored
+            // and then quietly do nothing, which is worse than saying so.
+            if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+                return Err("Only WAV files can be played.".into());
+            }
+            std::fs::write(&path, bytes).map_err(|err| err.to_string())?;
+            Ok(true)
+        }
+        None => {
+            let _ = std::fs::remove_file(&path);
+            Ok(false)
+        }
+    }
+}
+
+/// Play what a notification would play, so the choice can be heard before one
+/// arrives — which is otherwise a matter of waiting for a battery to run down.
+#[tauri::command]
+fn test_notification_sound(app: AppHandle, state: State<'_, Arc<Shared>>) {
+    let tr = state.locale.lock().unwrap().starts_with("tr");
+    let (title, body) = if tr {
+        ("Battery Hub", "Bildirim sesi denemesi")
+    } else {
+        ("Battery Hub", "Notification sound test")
+    };
+    let toast = with_sound(&state, app.notification().builder().title(title).body(body));
+    if let Err(err) = toast.show() {
+        devices::diagnostics::emit_line(&format!("[notify] test FAILED — {err}"));
+    }
+}
+
 #[tauri::command]
 fn apply_localization(
     app: AppHandle,
@@ -946,6 +1056,8 @@ pub fn run() {
             refresh_now,
             set_poll_seconds,
             set_notification_sound,
+            set_notification_sound_file,
+            test_notification_sound,
             apply_localization,
             close_to_tray
         ])

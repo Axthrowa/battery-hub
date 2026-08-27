@@ -9,8 +9,8 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { DEFAULT_ACCENT } from "../i18n/resources";
-import type { Locale } from "../i18n/resources";
+import { BACKGROUNDS, DEFAULT_ACCENT, DEFAULT_BACKGROUND } from "../i18n/resources";
+import type { Background, Locale } from "../i18n/resources";
 import {
   applyLocalization,
   isTauri,
@@ -28,7 +28,12 @@ export interface Settings {
   theme: Theme;
   /** Hex from `ACCENTS`, or any colour previously stored. */
   accent: string;
+  /** Which ground the panel is drawn on — see `styles.css`. */
+  background: Background;
   notificationSound: boolean;
+  /** Name of the chosen sound file, for showing which one it is. The file
+   *  itself lives beside the settings, written by Rust. */
+  soundFileName: string | null;
 }
 
 const DEFAULTS: Settings = {
@@ -37,7 +42,9 @@ const DEFAULTS: Settings = {
   autostart: false,
   theme: "dark",
   accent: DEFAULT_ACCENT,
+  background: DEFAULT_BACKGROUND,
   notificationSound: true,
+  soundFileName: null,
 };
 
 const DARK_QUERY = "(prefers-color-scheme: dark)";
@@ -47,9 +54,10 @@ function prefersDark() {
 }
 
 /** Hand the theme to the document: CSS does the rest, keyed off `data-theme`. */
-function paint(theme: Theme, accent: string) {
+function paint(theme: Theme, accent: string, background: Background) {
   const root = document.documentElement;
   root.dataset.theme = theme === "system" ? (prefersDark() ? "dark" : "light") : theme;
+  root.dataset.bg = background;
   root.style.setProperty("--bh-accent", accent);
 }
 
@@ -63,7 +71,7 @@ function paint(theme: Theme, accent: string) {
  */
 export function applyStoredTheme() {
   const stored = readLocal();
-  paint(stored.theme, stored.accent);
+  paint(stored.theme, stored.accent, stored.background);
 }
 const STORE_FILE = "settings.json";
 const STORE_KEY = "settings";
@@ -99,7 +107,14 @@ function sanitize(raw: unknown): Settings {
       typeof value.accent === "string" && /^#[0-9a-fA-F]{6}$/.test(value.accent)
         ? value.accent
         : DEFAULTS.accent,
+    background: BACKGROUNDS.includes(value.background as Background)
+      ? (value.background as Background)
+      : DEFAULTS.background,
     notificationSound: value.notificationSound !== false,
+    soundFileName:
+      typeof value.soundFileName === "string" && value.soundFileName.trim()
+        ? value.soundFileName.slice(0, 120)
+        : null,
   };
 }
 
@@ -177,17 +192,17 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   // Painted before `ready` too, so the first frame is not the wrong theme.
   useEffect(() => {
-    paint(settings.theme, settings.accent);
-  }, [settings.theme, settings.accent]);
+    paint(settings.theme, settings.accent, settings.background);
+  }, [settings.theme, settings.accent, settings.background]);
 
   // Only `system` cares what Windows is doing.
   useEffect(() => {
     if (settings.theme !== "system") return;
     const media = window.matchMedia(DARK_QUERY);
-    const onChange = () => paint("system", settings.accent);
+    const onChange = () => paint("system", settings.accent, settings.background);
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
-  }, [settings.theme, settings.accent]);
+  }, [settings.theme, settings.accent, settings.background]);
 
   useEffect(() => {
     if (!ready) return;

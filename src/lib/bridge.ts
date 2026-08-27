@@ -76,6 +76,25 @@ export const setPollSeconds = (seconds: number) => safeInvoke<void>("set_poll_se
 /** Whether the toasts Rust raises are allowed to make a sound. */
 export const setNotificationSound = (enabled: boolean) =>
   safeInvoke<void>("set_notification_sound", { enabled });
+
+/**
+ * Hand Rust a WAV to play with notifications, or `null` to go back to Windows'
+ * own chime. Resolves to `null` when it was stored, or to the reason it was
+ * refused — a wrong format is worth saying out loud rather than storing a file
+ * that would silently never play.
+ */
+export async function setNotificationSoundFile(bytes: number[] | null): Promise<string | null> {
+  if (!isTauri) return null;
+  try {
+    await invoke("set_notification_sound_file", { data: bytes });
+    return null;
+  } catch (err) {
+    return String(err);
+  }
+}
+
+/** Play what a notification would play, without waiting for one. */
+export const testNotificationSound = () => safeInvoke<void>("test_notification_sound");
 export const closeToTray = () => safeInvoke<void>("close_to_tray");
 
 /** A byte the scan believes could be a state of charge. */

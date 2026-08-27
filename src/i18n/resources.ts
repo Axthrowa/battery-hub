@@ -52,9 +52,20 @@ export const resources = {
       themeLight: "Açık",
       themeHint: "Sistem, Windows'un açık/koyu ayarını izler",
       accentColor: "Vurgu rengi",
+      background: "Arka plan",
+      bgAurora: "Işıltı",
+      bgMesh: "Örgü",
+      bgGrid: "Izgara",
+      bgPlain: "Düz",
+      customColor: "Özel renk",
       notifications: "Bildirimler",
       notificationSound: "Bildirim sesi",
       notificationSoundHint: "Şarj tamamlandı ve düşük pil bildirimleri sesli çalar",
+      soundFile: "Bildirim sesi dosyası",
+      soundFileHint: "Kendi WAV dosyanı seç; seçmezsen Windows'un kendi sesi çalar",
+      soundFileDefault: "Windows varsayılanı",
+      choose: "Seç",
+      test: "Test et",
     },
   },
   en: {
@@ -110,9 +121,20 @@ export const resources = {
       themeLight: "Light",
       themeHint: "System follows the Windows light/dark setting",
       accentColor: "Accent colour",
+      background: "Background",
+      bgAurora: "Aurora",
+      bgMesh: "Mesh",
+      bgGrid: "Grid",
+      bgPlain: "Plain",
+      customColor: "Custom colour",
       notifications: "Notifications",
       notificationSound: "Notification sound",
       notificationSoundHint: "Charge-complete and low-battery toasts play a sound",
+      soundFile: "Notification sound file",
+      soundFileHint: "Choose your own WAV; without one Windows plays its own chime",
+      soundFileDefault: "Windows default",
+      choose: "Choose",
+      test: "Test",
     },
   },
 } as const;
@@ -132,5 +154,13 @@ export const ACCENTS = [
 ] as const;
 
 export const DEFAULT_ACCENT = ACCENTS[0].value;
+
+// Grounds are drawn entirely from the theme tokens (see styles.css), so the
+// list here is only the names; nothing about how they look lives in TypeScript.
+export const BACKGROUNDS = ["aurora", "mesh", "grid", "plain"] as const;
+
+export type Background = (typeof BACKGROUNDS)[number];
+
+export const DEFAULT_BACKGROUND: Background = "aurora";
 
 export type Locale = keyof typeof resources;

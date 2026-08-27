@@ -1,8 +1,10 @@
 import type { CSSProperties, ReactNode } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ACCENTS, POLL_OPTIONS } from "../i18n/resources";
-import type { Locale } from "../i18n/resources";
+import { ACCENTS, BACKGROUNDS, POLL_OPTIONS } from "../i18n/resources";
+import type { Background, Locale } from "../i18n/resources";
 import { useSettings } from "../context/SettingsContext";
+import { setNotificationSoundFile, testNotificationSound } from "../lib/bridge";
 import type { Theme } from "../context/SettingsContext";
 
 interface SettingsModalProps {
@@ -14,6 +16,15 @@ const LOCALES: { id: Locale; labelKey: "turkish" | "english"; flag: string }[] =
   { id: "tr", labelKey: "turkish", flag: "TR" },
   { id: "en", labelKey: "english", flag: "EN" },
 ];
+
+// The tile shows the ground itself, drawn by the same CSS the window uses, so
+// what is on the button is what the panel becomes.
+const BACKGROUND_LABEL: Record<Background, "bgAurora" | "bgMesh" | "bgGrid" | "bgPlain"> = {
+  aurora: "bgAurora",
+  mesh: "bgMesh",
+  grid: "bgGrid",
+  plain: "bgPlain",
+};
 
 const THEMES: { id: Theme; labelKey: "themeSystem" | "themeDark" | "themeLight" }[] = [
   { id: "system", labelKey: "themeSystem" },
@@ -89,6 +100,28 @@ function Toggle({
 export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const { t } = useTranslation();
   const { settings, update } = useSettings();
+  const soundInput = useRef<HTMLInputElement>(null);
+  const [soundError, setSoundError] = useState<string | null>(null);
+
+  // The file goes to Rust, which is what has to play it; only the name is kept
+  // here, so the panel can say which one is in force.
+  const pickSound = async (file: File | null) => {
+    if (!file) return;
+    setSoundError(null);
+    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+    const refused = await setNotificationSoundFile(bytes);
+    if (refused) {
+      setSoundError(refused);
+      return;
+    }
+    await update({ soundFileName: file.name });
+  };
+
+  const clearSound = async () => {
+    setSoundError(null);
+    await setNotificationSoundFile(null);
+    await update({ soundFileName: null });
+  };
 
   if (!open) return null;
 
@@ -163,6 +196,50 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   />
                 );
               })}
+              <label
+                className="relative grid h-9 w-9 cursor-pointer place-items-center rounded-full ring-1 ring-white/15 transition hover:ring-white/40"
+                title={t("customColor")}
+                style={{ backgroundColor: "var(--color-ink-800)" }}
+              >
+                <span className="text-[15px] leading-none text-neutral-400">+</span>
+                <input
+                  type="color"
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  value={settings.accent}
+                  onChange={(event) => void update({ accent: event.target.value })}
+                  aria-label={t("customColor")}
+                />
+              </label>
+            </div>
+          </Section>
+
+          <Section title={t("background")}>
+            <div className="grid grid-cols-4 gap-2">
+              {BACKGROUNDS.map((id) => {
+                const active = settings.background === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => void update({ background: id })}
+                    aria-pressed={active}
+                    className={`overflow-hidden rounded-xl border text-center transition ${
+                      active
+                        ? "border-accent/60 bg-accent/10"
+                        : "border-white/10 bg-ink-800 hover:border-white/25"
+                    }`}
+                  >
+                    <span className={`ground-preview-${id} block h-11 w-full`} />
+                    <span
+                      className={`block py-1.5 text-[11px] ${
+                        active ? "text-accent" : "text-neutral-400"
+                      }`}
+                    >
+                      {t(BACKGROUND_LABEL[id])}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </Section>
 
@@ -188,6 +265,50 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               checked={settings.notificationSound}
               onChange={(value) => void update({ notificationSound: value })}
             />
+
+            <div className="mt-2 rounded-xl border border-white/10 bg-ink-800 p-3.5">
+              <p className="text-sm text-neutral-200">{t("soundFile")}</p>
+              <p className="mt-0.5 text-xs text-neutral-500">{t("soundFileHint")}</p>
+              <p className="mt-2 truncate text-xs text-neutral-400">
+                {settings.soundFileName ?? t("soundFileDefault")}
+              </p>
+              {soundError ? (
+                <p className="mt-1 text-xs text-red-300">{soundError}</p>
+              ) : null}
+              <div className="mt-2.5 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => soundInput.current?.click()}
+                  className="flex-1 rounded-lg border border-white/10 py-1.5 text-xs text-neutral-300 transition hover:border-white/25"
+                >
+                  {t("choose")}
+                </button>
+                {settings.soundFileName ? (
+                  <button
+                    type="button"
+                    onClick={() => void clearSound()}
+                    className="flex-1 rounded-lg border border-white/10 py-1.5 text-xs text-neutral-300 transition hover:border-white/25"
+                  >
+                    {t("remove")}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => void testNotificationSound()}
+                  disabled={!settings.notificationSound}
+                  className="flex-1 rounded-lg border border-accent/40 py-1.5 text-xs text-accent transition hover:border-accent/70 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {t("test")}
+                </button>
+              </div>
+              <input
+                ref={soundInput}
+                type="file"
+                accept="audio/wav,.wav"
+                className="hidden"
+                onChange={(event) => void pickSound(event.target.files?.[0] ?? null)}
+              />
+            </div>
           </Section>
 
           <Toggle

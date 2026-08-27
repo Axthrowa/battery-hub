@@ -39,6 +39,7 @@
   --bh-canvas-mid: #08090b;
   --bh-canvas-far: #0c1014;
   --bh-glow: 0.1;
+  --bh-rule: rgba(255, 255, 255, 0.05);
   color-scheme: dark;
 }
 
@@ -76,7 +77,82 @@
   --bh-canvas-mid: #e9edf3;
   --bh-canvas-far: #f6f8fb;
   --bh-glow: 0.22;
+  --bh-rule: rgba(13, 17, 22, 0.07);
   color-scheme: light;
+}
+
+
+/*
+ * Grounds
+ *
+ * Four backgrounds, one definition each, written in percentages rather than
+ * pixels so the same declaration draws the window and the little preview tile
+ * in settings at their own sizes. None of them carries a colour of its own:
+ * every one is built from the canvas tokens, the accent and the rule colour,
+ * so a ground follows the theme and the accent instead of fighting them.
+ */
+:root {
+  --ground-aurora:
+    radial-gradient(
+      160% 58% at 12% -10%,
+      color-mix(in srgb, var(--color-accent) calc(var(--bh-glow) * 100%), transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      135% 53% at 92% 8%,
+      color-mix(in srgb, var(--color-razer) 8%, transparent),
+      transparent 50%
+    ),
+    linear-gradient(
+      165deg,
+      var(--bh-canvas-near) 0%,
+      var(--bh-canvas-mid) 45%,
+      var(--bh-canvas-far) 100%
+    );
+
+  --ground-mesh:
+    radial-gradient(
+      95% 70% at 5% 0%,
+      color-mix(in srgb, var(--color-accent) calc(var(--bh-glow) * 190%), transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      85% 60% at 100% 12%,
+      color-mix(in srgb, var(--color-logitech) calc(var(--bh-glow) * 110%), transparent),
+      transparent 58%
+    ),
+    radial-gradient(
+      110% 75% at 50% 115%,
+      color-mix(in srgb, var(--color-ajazz) calc(var(--bh-glow) * 90%), transparent),
+      transparent 60%
+    ),
+    linear-gradient(160deg, var(--bh-canvas-near) 0%, var(--bh-canvas-far) 100%);
+
+  --ground-grid:
+    linear-gradient(var(--bh-rule) 1px, transparent 1px) 0 0 / 26px 26px,
+    linear-gradient(90deg, var(--bh-rule) 1px, transparent 1px) 0 0 / 26px 26px,
+    radial-gradient(
+      140% 55% at 15% -5%,
+      color-mix(in srgb, var(--color-accent) calc(var(--bh-glow) * 80%), transparent),
+      transparent 60%
+    ),
+    linear-gradient(180deg, var(--bh-canvas-near) 0%, var(--bh-canvas-far) 100%);
+
+  --ground-plain: linear-gradient(180deg, var(--bh-canvas-near) 0%, var(--bh-canvas-far) 100%);
+
+  --bh-ground: var(--ground-aurora);
+}
+
+:root[data-bg="mesh"] {
+  --bh-ground: var(--ground-mesh);
+}
+
+:root[data-bg="grid"] {
+  --bh-ground: var(--ground-grid);
+}
+
+:root[data-bg="plain"] {
+  --bh-ground: var(--ground-plain);
 }
 
 @layer base {
@@ -88,19 +164,8 @@
   }
 
   body {
-    background:
-      radial-gradient(
-        820px 420px at 12% -10%,
-        color-mix(in srgb, var(--color-accent) calc(var(--bh-glow) * 100%), transparent),
-        transparent 55%
-      ),
-      radial-gradient(700px 380px at 92% 8%, rgba(68, 214, 44, 0.08), transparent 50%),
-      linear-gradient(
-        165deg,
-        var(--bh-canvas-near) 0%,
-        var(--bh-canvas-mid) 45%,
-        var(--bh-canvas-far) 100%
-      );
+    background: var(--bh-ground);
+    background-attachment: fixed;
     color: var(--bh-text-strong);
     font-family: var(--font-display);
     -webkit-font-smoothing: antialiased;
@@ -128,6 +193,22 @@
 
   :root[data-theme="light"] .accent-swatch {
     background-color: color-mix(in oklab, var(--swatch) 68%, #0b0d10);
+  }
+
+  .ground-preview-aurora {
+    background: var(--ground-aurora);
+  }
+
+  .ground-preview-mesh {
+    background: var(--ground-mesh);
+  }
+
+  .ground-preview-grid {
+    background: var(--ground-grid);
+  }
+
+  .ground-preview-plain {
+    background: var(--ground-plain);
   }
 
   /* The switch knob is white on both grounds — pale accent under it on the
