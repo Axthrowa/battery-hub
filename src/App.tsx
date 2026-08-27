@@ -168,6 +168,8 @@ export default function App() {
               onClearLogo={() => void clearLogo(device.product)}
               pickLogoLabel={t("pickLogo")}
               clearLogoLabel={t("removeLogo")}
+              unverifiedLabel={t("unverified")}
+              unverifiedHint={t("unverifiedHint")}
             />
           ))}
         </div>

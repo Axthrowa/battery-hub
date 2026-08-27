@@ -30,6 +30,11 @@ const SAMPLE_GAP: Duration = Duration::from_millis(180);
 #[serde(rename_all = "camelCase")]
 pub struct CandidateValue {
     pub usage_page: u16,
+    /// Usage + interface pin the reading to the collection probed here, so the
+    /// poll cannot drift onto a sibling collection that answers the same
+    /// report with a byte that never changes.
+    pub usage: u16,
+    pub interface: i32,
     pub report_id: u8,
     pub byte_offset: usize,
     pub percent: u8,
@@ -108,6 +113,8 @@ pub fn scan() -> Vec<DeviceCandidate> {
             .take(MAX_VALUES_PER_DEVICE)
             .map(|(byte_offset, percent)| CandidateValue {
                 usage_page: probe.usage_page,
+                usage: probe.usage,
+                interface: probe.interface,
                 report_id: probe.report_id,
                 byte_offset,
                 percent,
@@ -171,6 +178,8 @@ struct Probe {
     vendor_id: u16,
     product_id: u16,
     usage_page: u16,
+    usage: u16,
+    interface: i32,
     report_id: u8,
     automatic: bool,
     payload: Vec<u8>,
@@ -209,6 +218,8 @@ fn sweep() -> Vec<Probe> {
                     vendor_id: info.vendor_id(),
                     product_id: info.product_id(),
                     usage_page: info.usage_page(),
+                    usage: info.usage(),
+                    interface: info.interface_number(),
                     report_id: 0,
                     automatic,
                     payload: Vec::new(),
@@ -227,6 +238,8 @@ fn sweep() -> Vec<Probe> {
                     vendor_id: info.vendor_id(),
                     product_id: info.product_id(),
                     usage_page: info.usage_page(),
+                    usage: info.usage(),
+                    interface: info.interface_number(),
                     report_id,
                     automatic,
                     payload,

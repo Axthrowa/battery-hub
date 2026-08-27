@@ -27,6 +27,10 @@ export interface DeviceReading {
   product: string;
   error: string | null;
   present: boolean;
+  /** Read from a byte the user confirmed by sight. */
+  taught: boolean;
+  /** That byte has since stopped moving — shown, but not as a measurement. */
+  unverified: boolean;
   updatedAtMs: number;
 }
 
@@ -78,6 +82,9 @@ export const readBluetoothBattery = () =>
 /** A byte the scan believes could be a state of charge. */
 export interface CandidateValue {
   usagePage: number;
+  /** Pins the value to the collection the scan read it from. */
+  usage: number;
+  interface: number;
   reportId: number;
   byteOffset: number;
   percent: number;
@@ -103,6 +110,9 @@ export interface LearnedDevice {
   reportId: number;
   byteOffset: number;
   maxValue: number;
+  /** Absent on devices taught before the collection was recorded. */
+  interface?: number | null;
+  usage?: number | null;
 }
 
 export const scanDevices = () => safeInvoke<DeviceCandidate[]>("scan_devices");

@@ -67,6 +67,8 @@ struct Shared {
     misses: AtomicU32,
     dongle_seen: AtomicBool,
     dongle_misses: AtomicU32,
+    /// Cleared as soon as the user opens the app by hand — see `launched_for_dongle`.
+    exit_with_radio: AtomicBool,
     shutting_down: AtomicBool,
     /// Product keys that already fired a low-battery toast.
     low_battery_notified: Mutex<HashSet<String>>,
@@ -88,6 +90,7 @@ impl Shared {
             misses: AtomicU32::new(0),
             dongle_seen: AtomicBool::new(false),
             dongle_misses: AtomicU32::new(0),
+            exit_with_radio: AtomicBool::new(launched_for_dongle()),
             shutting_down: AtomicBool::new(false),
             low_battery_notified: Mutex::new(HashSet::new()),
         }
@@ -305,6 +308,39 @@ fn load_settings_from_store(app: &AppHandle, shared: &Shared) {
     }
 }
 
+/// Windows keeps the login entry as a full path to the executable, and it is
+/// written once — when the switch is flipped. Anything that moves the binary
+/// (an install over a portable copy, a version that lands in a new folder, a
+/// build that was toggled on from `target\debug`) leaves the entry pointing at
+/// a path that no longer exists, and Windows then skips it without a word: the
+/// switch still reads "on" while nothing starts. Re-asserting the stored
+/// preference on every launch keeps the entry pointing at the running binary.
+#[cfg(desktop)]
+fn reconcile_autostart(app: &AppHandle) {
+    use tauri_plugin_autostart::ManagerExt;
+
+    let Some(wanted) = app
+        .store(SETTINGS_STORE_FILE)
+        .ok()
+        .and_then(|store| store.get(SETTINGS_KEY))
+        .and_then(|value| value.get("autostart").and_then(|flag| flag.as_bool()))
+    else {
+        return;
+    };
+
+    let manager = app.autolaunch();
+    let outcome = if wanted {
+        manager.enable()
+    } else if manager.is_enabled().unwrap_or(false) {
+        manager.disable()
+    } else {
+        Ok(())
+    };
+    if let Err(err) = outcome {
+        eprintln!("autostart reconcile failed: {err}");
+    }
+}
+
 fn flush_state(app: &AppHandle, reason: &str) -> bool {
     let Some(shared) = app.try_state::<Arc<Shared>>().map(|s| s.inner().clone()) else {
         return false;
@@ -334,6 +370,16 @@ fn graceful_shutdown(app: &AppHandle, reason: &str) {
     app.exit(0);
 }
 
+/// True only for the launch the device-arrival task makes (see
+/// `scripts/device-trigger`). That instance exists to watch one receiver and is
+/// meant to exit with it, because a scheduled task starts it again on the next
+/// plug-in. A normal or autostart launch has no such task behind it: quitting
+/// there means the tray icon disappears minutes after login — as soon as the
+/// mouse sleeps or the headset is switched off — and never comes back.
+fn launched_for_dongle() -> bool {
+    std::env::args().any(|arg| arg == ARG_REQUIRE_DONGLE)
+}
+
 fn poll_loop(app: AppHandle, shared: Arc<Shared>) {
     loop {
         // Teşhis: tüm HID VID/PID + Bluetooth adları (konsol + diagnostics.log).
@@ -344,9 +390,10 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>) {
         for d in &snapshot.devices {
             let line = match (d.ok, d.percent) {
                 (true, Some(p)) => format!(
-                    "[poll] {} OK {}% ({}) {}",
+                    "[poll] {} OK {}%{} ({}) {}",
                     d.brand.label(),
                     p,
+                    if d.unverified { " UNVERIFIED" } else { "" },
                     d.transport,
                     d.product
                 ),
@@ -385,7 +432,8 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>) {
         if radio {
             shared.dongle_misses.store(0, Ordering::Relaxed);
             shared.dongle_seen.store(true, Ordering::Release);
-        } else if shared.dongle_seen.load(Ordering::Acquire)
+        } else if shared.exit_with_radio.load(Ordering::Acquire)
+            && shared.dongle_seen.load(Ordering::Acquire)
             && shared.dongle_misses.fetch_add(1, Ordering::AcqRel) + 1 >= DISCONNECT_STRIKES
         {
             graceful_shutdown(&app, "radio-removed");
@@ -542,9 +590,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if !argv.iter().any(|arg| arg == ARG_REQUIRE_DONGLE) {
-                show_main_window(app);
+            if argv.iter().any(|arg| arg == ARG_REQUIRE_DONGLE) {
+                return;
             }
+            // Opened by hand: this is no longer a watcher the device-arrival
+            // task may throw away when the receiver goes.
+            if let Some(shared) = app.try_state::<Arc<Shared>>() {
+                shared.exit_with_radio.store(false, Ordering::Release);
+            }
+            show_main_window(app);
         }))
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
@@ -599,6 +653,7 @@ pub fn run() {
                     MacosLauncher::LaunchAgent,
                     Some(vec!["--minimized"]),
                 ))?;
+                reconcile_autostart(app.handle());
             }
 
             // Bildirim izni yoksa iste; aksi halde `.show()` sessizce başarısız olur

@@ -67,6 +67,8 @@ export function AddDeviceModal({
         vendorId: candidate.vendorId,
         productId: candidate.productId,
         usagePage: value.usagePage,
+        usage: value.usage,
+        interface: value.interface,
         reportId: value.reportId,
         byteOffset: value.byteOffset,
         maxValue: 100,

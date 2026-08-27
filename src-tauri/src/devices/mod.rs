@@ -34,6 +34,11 @@ pub struct DeviceReading {
     pub error: Option<String>,
     /// Dongle / receiver / paired radio is present even if SOC could not be read.
     pub present: bool,
+    /// Read from a byte the user confirmed by sight (see `learned`).
+    pub taught: bool,
+    /// A taught byte that has stopped looking like a reading: same report, poll
+    /// after poll, for hours. Shown, but not as a measurement.
+    pub unverified: bool,
     pub updated_at_ms: u64,
 }
 
@@ -56,7 +61,27 @@ impl DeviceReading {
             product: product.into(),
             error: None,
             present: true,
+            taught: false,
+            unverified: false,
             updated_at_ms: now_ms(),
+        }
+    }
+
+    /// A reading from a location the user taught. Teaching a device only ever
+    /// happens because the automatic value was missing or wrong, so a confirmed
+    /// one outranks every generic reader for the same product — while one the
+    /// evidence has turned against stops outranking anything.
+    pub fn taught(
+        brand: Brand,
+        product: impl Into<String>,
+        transport: impl Into<String>,
+        percent: u8,
+        verified: bool,
+    ) -> Self {
+        Self {
+            taught: verified,
+            unverified: !verified,
+            ..Self::ok(brand, product, transport, percent, false)
         }
     }
 
@@ -78,6 +103,8 @@ impl DeviceReading {
             product: product.into(),
             error: Some(error.into()),
             present,
+            taught: false,
+            unverified: false,
             updated_at_ms: now_ms(),
         }
     }
@@ -183,6 +210,13 @@ fn push_unique(out: &mut Vec<DeviceReading>, device: DeviceReading) {
         // Prefer a successful SOC reading over presence-only / weaker sources.
         let replace = match (existing.ok, device.ok) {
             (false, true) => true,
+            (true, true) if existing.taught != device.taught => {
+                // A taught byte is re-read from the hardware on every poll. The
+                // generic sources it competes with — the cached Bluetooth
+                // battery property in particular — can sit on one value for
+                // days, which is exactly what the user taught around.
+                device.taught
+            }
             (true, true) => {
                 // Prefer specialized transports over generic Bluetooth when both OK.
                 let ex_spec = is_specialized_transport(&existing.transport);
@@ -265,7 +299,8 @@ pub fn read_all() -> DeviceSnapshot {
         let value = hid_battery::read_all();
         record(&timings_hid, "hid", started);
         let _ = tx_h.send(value);
-    });
+    });
+
     let timings_learned = timings.clone();
     let h_u = thread::spawn(move || {
         let started = Instant::now();

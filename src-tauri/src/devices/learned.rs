@@ -8,13 +8,24 @@
 
 use super::hid;
 use super::{Brand, DeviceReading};
+use hidapi::DeviceInfo;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const STORE_FILE: &str = "devices.json";
 const REPORT_MAX: usize = 64;
+/// A state of charge moves. Nothing says how fast, so the window is generous:
+/// a keyboard resting at 92% through a working day is ordinary. A vendor report
+/// that has not changed one bit in six hours of polling is not a measurement —
+/// it is a constant the scan mistook for a percentage, because two samples
+/// 180 ms apart cannot tell the two apart.
+const STALE_AFTER_MS: u64 = 6 * 60 * 60 * 1000;
+/// Guards against flagging a device on the single read that follows a long
+/// suspend, where the clock has moved but the hardware has barely been asked.
+const STALE_AFTER_POLLS: u32 = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,11 +42,41 @@ pub struct LearnedDevice {
     /// Raw value that means 100% — 0 falls back to a plain percentage.
     #[serde(default)]
     pub max_value: u8,
+    /// USB interface the scan actually probed. `None` on entries taught before
+    /// the interface was recorded; those still match on VID/PID/usage page.
+    #[serde(default)]
+    pub interface: Option<i32>,
+    /// HID usage inside the collection, paired with `usage_page`.
+    #[serde(default)]
+    pub usage: Option<u16>,
+    /// Evidence that the taught location really is telemetry: the report as it
+    /// last read, and when it last differed. Persisted so the verdict survives
+    /// restarts instead of starting over every launch.
+    #[serde(default)]
+    pub last_payload: Option<Vec<u8>>,
+    #[serde(default)]
+    pub last_change_ms: Option<u64>,
+    #[serde(default, skip_serializing)]
+    pub polls: u32,
 }
 
 impl LearnedDevice {
     pub fn key(vendor_id: u16, product_id: u16, usage_page: u16, report_id: u8, offset: usize) -> String {
         format!("{vendor_id:04X}:{product_id:04X}:{usage_page:04X}:{report_id:02X}:{offset}")
+    }
+
+    /// Every collection the taught byte could live in.
+    fn matches(&self, info: &DeviceInfo) -> bool {
+        info.vendor_id() == self.vendor_id
+            && info.product_id() == self.product_id
+            && info.usage_page() == self.usage_page
+    }
+
+    /// The one collection the scan read the byte from.
+    fn is_exact(&self, info: &DeviceInfo) -> bool {
+        self.interface
+            .is_some_and(|number| number == info.interface_number())
+            && self.usage.is_none_or(|usage| usage == info.usage())
     }
 
     fn percent(&self, raw: u8) -> Option<u8> {
@@ -45,6 +86,13 @@ impl LearnedDevice {
         }
         Some(((raw as u32 * 100) / max as u32).min(100) as u8)
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn store_path() -> Option<PathBuf> {
@@ -99,6 +147,46 @@ pub fn remove(id: &str) -> Result<Vec<LearnedDevice>, String> {
     Ok(list.clone())
 }
 
+/// Record what the report actually held this poll.
+///
+/// Returns whether the taught location still looks like a reading. The whole
+/// report is compared, not just the taught byte: a live report almost always
+/// carries something that moves next to the value — a counter, a status flag, a
+/// checksum — while a frozen block of bytes is a constant the firmware answers
+/// with and never updates.
+fn note_observation(id: &str, payload: &[u8]) -> bool {
+    let mut list = match cache().lock() {
+        Ok(list) => list,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let Some(device) = list.iter_mut().find(|device| device.id == id) else {
+        return true;
+    };
+
+    let now = now_ms();
+    let mut changed = false;
+    if device.last_payload.as_deref() == Some(payload) {
+        device.polls = device.polls.saturating_add(1);
+    } else {
+        device.last_payload = Some(payload.to_vec());
+        device.last_change_ms = Some(now);
+        device.polls = 0;
+        changed = true;
+    }
+
+    let unchanged_for = device
+        .last_change_ms
+        .map_or(0, |since| now.saturating_sub(since));
+    let verified = device.polls < STALE_AFTER_POLLS || unchanged_for < STALE_AFTER_MS;
+
+    if changed {
+        let snapshot = list.clone();
+        drop(list);
+        let _ = save_to_disk(&snapshot);
+    }
+    verified
+}
+
 /// Read every taught device. Ones that are not currently connected are
 /// reported as absent so they drop out of the snapshot instead of going stale.
 pub fn read_all() -> Vec<DeviceReading> {
@@ -110,14 +198,16 @@ pub fn read_all() -> Vec<DeviceReading> {
     let result = hid::with_api(|api| {
         let mut out = Vec::with_capacity(devices.len());
         for device in &devices {
+            // One product usually publishes several collections behind the same
+            // usage page, and only one of them carries the report the scan read.
+            // Picking whichever the enumeration happened to list first lands on
+            // a static vendor report: a percentage that never moves again.
+            let mut collections: Vec<&DeviceInfo> =
+                api.device_list().filter(|info| device.matches(info)).collect();
+            collections.sort_by_key(|info| !device.is_exact(info));
+
             let mut reading = None;
-            for info in api.device_list() {
-                if info.vendor_id() != device.vendor_id
-                    || info.product_id() != device.product_id
-                    || info.usage_page() != device.usage_page
-                {
-                    continue;
-                }
+            for info in collections {
                 let Ok(handle) = api.open_path(info.path()) else {
                     continue;
                 };
@@ -126,18 +216,26 @@ pub fn read_all() -> Vec<DeviceReading> {
                 let Ok(read) = handle.get_feature_report(&mut buf) else {
                     continue;
                 };
-                // Byte 0 is the report ID; the payload starts after it.
-                let payload = &buf[1..read.min(REPORT_MAX)];
+                // Byte 0 is the report ID; the payload starts after it. A read
+                // that short means this collection does not answer the report
+                // at all — slicing it would panic, and `panic = "abort"` in the
+                // release profile takes the whole tray app down with it.
+                let end = read.min(REPORT_MAX);
+                if end <= 1 {
+                    continue;
+                }
+                let payload = &buf[1..end];
                 let Some(raw) = payload.get(device.byte_offset).copied() else {
                     continue;
                 };
                 if let Some(percent) = device.percent(raw) {
-                    reading = Some(DeviceReading::ok(
+                    let verified = note_observation(&device.id, payload);
+                    reading = Some(DeviceReading::taught(
                         Brand::classify("", &device.name),
                         device.name.clone(),
                         hid::transport_label(info),
                         percent,
-                        false,
+                        verified,
                     ));
                     break;
                 }

@@ -52,6 +52,9 @@ export const resources = {
       logoHint: "Logoya tıklayarak cihazın kendi görselini kullanabilirsin",
       deviceName: "Cihaz adı",
       deviceNameHint: "Alıcılar genelde jenerik bir ad bildirir — cihazın gerçek adını yazın",
+      unverified: "Doğrulanmadı",
+      unverifiedHint:
+        "Bu değer saatlerdir hiç değişmedi — öğretilen bayt pil yüzdesi olmayabilir",
       levelHigh: "İyi",
       levelMedium: "Orta",
       levelLow: "Düşük",
@@ -110,6 +113,9 @@ export const resources = {
       logoHint: "Click a logo to use the device's own artwork",
       deviceName: "Device name",
       deviceNameHint: "Receivers usually report a generic name - type the real device name",
+      unverified: "Unconfirmed",
+      unverifiedHint:
+        "This value has not moved in hours — the taught byte may not be a battery level",
       levelHigh: "Good",
       levelMedium: "Medium",
       levelLow: "Low",

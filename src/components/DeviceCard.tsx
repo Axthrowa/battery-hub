@@ -13,6 +13,8 @@ interface DeviceCardProps {
   onClearLogo?: () => void;
   pickLogoLabel?: string;
   clearLogoLabel?: string;
+  unverifiedLabel?: string;
+  unverifiedHint?: string;
 }
 
 export function DeviceCard({
@@ -26,6 +28,8 @@ export function DeviceCard({
   onClearLogo,
   pickLogoLabel,
   clearLogoLabel,
+  unverifiedLabel,
+  unverifiedHint,
 }: DeviceCardProps) {
   const online = device.ok;
   const percent = device.percent;
@@ -96,7 +100,14 @@ export function DeviceCard({
           </span>
           <span className="mt-1 ml-1 text-sm font-medium text-neutral-500">%</span>
         </div>
-        {device.charging && online ? (
+        {online && device.unverified ? (
+          <span
+            title={unverifiedHint}
+            className="rounded-md border border-amber-400/30 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-300/90"
+          >
+            {unverifiedLabel}
+          </span>
+        ) : device.charging && online ? (
           <span className="text-xs font-medium" style={{ color }}>
             {chargingLabel}
           </span>
