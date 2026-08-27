@@ -11,7 +11,7 @@ use super::{Brand, DeviceReading};
 use hidapi::{DeviceInfo, HidDevice};
 use std::cmp::Reverse;
 use std::ffi::CString;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -311,6 +311,29 @@ fn reading_cache() -> &'static Mutex<HashMap<u8, LastReading>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Receiver slots seen to carry UnifiedBattery.
+///
+/// Which feature a device answers on is a property of the device, not of the
+/// poll, so it is worth remembering — and it is the only way to tell a mouse
+/// that has gone off the link from one whose feature lookup merely stumbled.
+fn unified_slots() -> &'static Mutex<HashSet<u8>> {
+    static SLOTS: OnceLock<Mutex<HashSet<u8>>> = OnceLock::new();
+    SLOTS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn note_unified(device_index: u8) {
+    if let Ok(mut slots) = unified_slots().lock() {
+        slots.insert(device_index);
+    }
+}
+
+fn carries_unified(device_index: u8) -> bool {
+    unified_slots()
+        .lock()
+        .map(|slots| slots.contains(&device_index))
+        .unwrap_or(false)
+}
+
 fn remember(device_index: u8, value: (u8, bool)) -> (u8, bool) {
     if let Ok(mut cache) = reading_cache().lock() {
         cache.insert(
@@ -358,9 +381,22 @@ fn try_device_index(dev: &HidDevice, device_index: u8) -> Option<(u8, bool)> {
     // charging". Falling through to it whenever 0x1004 misses a poll turned
     // that into a reading, and into a low-battery toast for a full mouse.
     if let Some(idx) = get_feature_index(dev, device_index, FEAT_UNIFIED_BATTERY) {
+        note_unified(device_index);
         return read_unified_battery(dev, device_index, idx)
             .map(|v| remember(device_index, note("unified(0x1004)", v)))
             .or_else(|| recent(device_index));
+    }
+    if carries_unified(device_index) {
+        // This slot has answered on 0x1004 before and cannot now, which means
+        // the mouse is off the link — switched off, or asleep. The receiver
+        // will still answer for it on 0x1000, and what it says there describes
+        // no device: on a PRO X2 SUPERSTRIKE it is "15%, charging", whatever
+        // the mouse is really doing. That is how a switched-off mouse ends up
+        // on the panel as a nearly flat battery on the cable.
+        super::diagnostics::emit_line(&format!(
+            "[hidpp] dev{device_index} 0x1004 silent — mouse off the link, not falling back"
+        ));
+        return recent(device_index);
     }
     if let Some(idx) = get_feature_index(dev, device_index, FEAT_BATTERY_STATUS) {
         if let Some(v) = read_battery_status(dev, device_index, idx) {
