@@ -148,6 +148,24 @@ Two things that are easy to get wrong here:
 - The GNU target cannot link the `cdylib`, so build the `--bin` target on its
   own, and copy `WebView2Loader.dll` from the target directory next to the exe.
 
+## Installing when the NSIS installer is blocked
+
+Signing clears Smart App Control for the executable, but not for the installer:
+a signed NSIS setup is refused every time, while the same certificate on the
+plain exe is accepted. Self-extracting installers are their own reputation
+category, and one nobody has vouched for does not get in.
+
+`scripts/install/` is the way around it — plain PowerShell, so there is no new
+image for SAC to judge. Copy the signed `battery-hub.exe`, `WebView2Loader.dll`
+and the four files from that directory into one folder and run `Kur.cmd`. It
+installs to `%LOCALAPPDATA%\Battery Hub`, creates the Start Menu entry and the
+Add/Remove Programs entry, and drops `Kaldir.cmd` next to the binary for
+uninstalling. Neither script touches `devices.json` or the settings store.
+
+Note that SAC decides per file hash and asks its cloud service first, so a
+freshly signed binary is refused for a minute or two before it is allowed.
+A block right after building is not a signing problem — wait and start it again.
+
 ## Probing a device without building anything
 
 `scripts/hid-probe.py` reads HID devices through Windows' own signed
