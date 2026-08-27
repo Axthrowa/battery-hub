@@ -6,7 +6,6 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use devices::{BatteryReading, DeviceReading, DeviceSnapshot};
-use devices::ble_gatt::BleBatteryInfo;
 use devices::discover::DeviceCandidate;
 use devices::learned::LearnedDevice;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -24,7 +23,6 @@ const TRAY_ID: &str = "battery-hub-tray";
 const EVENT_BATTERY: &str = "battery://update";
 const EVENT_DEVICES: &str = "devices://update";
 const EVENT_OPEN_SETTINGS: &str = "ui://open-settings";
-const EVENT_BEFORE_EXIT: &str = "app://before-exit";
 const DEFAULT_POLL_SECONDS: u64 = 60;
 const MIN_POLL_SECONDS: u64 = 5;
 const WATCH_POLL_SECONDS: u64 = 15;
@@ -34,7 +32,6 @@ const CHARGING_POLL_SECONDS: u64 = 8;
 const DISCONNECT_STRIKES: u32 = 2;
 const ARG_REQUIRE_DONGLE: &str = "--require-dongle";
 const ARG_SCAN_DEVICES: &str = "--scan-devices";
-const SHUTDOWN_GRACE_MS: u64 = 250;
 /// Per-device low-battery threshold (exclusive: notify when percent < this).
 const LOW_BATTERY_THRESHOLD: u8 = 20;
 /// Windows' own notification chime. The name is the bare one the toast builder
@@ -172,7 +169,6 @@ const SETTINGS_STORE_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "settings";
 const SESSION_STORE_FILE: &str = "session.json";
 const SESSION_KEY: &str = "lastSession";
-const SESSION_FRONTEND_KEY: &str = "frontendState";
 
 const DEVICE_ITEM_IDS: &[&str] = &[
     "dev-0", "dev-1", "dev-2", "dev-3", "dev-4", "dev-5", "dev-6", "dev-7",
@@ -711,11 +707,6 @@ fn flush_state(app: &AppHandle, reason: &str) -> bool {
         "lastSnapshot": shared.last_snapshot.lock().unwrap().clone(),
     });
 
-    if app.get_webview_window("main").is_some() {
-        let _ = app.emit(EVENT_BEFORE_EXIT, &payload);
-        std::thread::sleep(Duration::from_millis(SHUTDOWN_GRACE_MS));
-    }
-
     store_write(app, SESSION_KEY, payload);
     true
 }
@@ -823,22 +814,6 @@ fn wait_for_next_poll(shared: &Shared) {
     *requested = false;
 }
 
-#[tauri::command(async)]
-fn get_battery() -> BatteryReading {
-    devices::read_battery()
-}
-
-#[tauri::command(async)]
-fn get_devices() -> DeviceSnapshot {
-    devices::read_all()
-}
-
-/// WinRT BLE scan: GATT Battery Service (UUID 0x180F) → Battery Level (0x2A19).
-#[tauri::command(async)]
-fn read_bluetooth_battery() -> Vec<BleBatteryInfo> {
-    devices::ble_gatt::scan_ble_batteries()
-}
-
 /// Deep scan for hardware whose battery byte the user can confirm by sight.
 #[tauri::command(async)]
 fn scan_devices() -> Vec<DeviceCandidate> {
@@ -923,16 +898,6 @@ fn close_to_tray(app: AppHandle) {
     }
 }
 
-#[tauri::command]
-fn quit_app(app: AppHandle) {
-    graceful_shutdown(&app, "user-quit");
-}
-
-#[tauri::command]
-fn save_session(app: AppHandle, data: serde_json::Value) {
-    store_write(&app, SESSION_FRONTEND_KEY, data);
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Support path: run the add-device scan, write the result to
@@ -972,9 +937,6 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(shared.clone())
         .invoke_handler(tauri::generate_handler![
-            get_battery,
-            get_devices,
-            read_bluetooth_battery,
             scan_devices,
             learned_devices,
             add_learned_device,
@@ -985,9 +947,7 @@ pub fn run() {
             set_poll_seconds,
             set_notification_sound,
             apply_localization,
-            close_to_tray,
-            quit_app,
-            save_session
+            close_to_tray
         ])
         .on_window_event(|window, event| match event {
             // Let close proceed so WebView2 is destroyed. Process stays via prevent_exit.

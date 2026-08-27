@@ -1,0 +1,7 @@
+# The tree is CRLF: it is a Windows app, edited on Windows, and the NSIS and
+# PowerShell scripts in here care. Declaring it keeps a checkout on any machine
+# -- or an edit made from WSL -- from silently flipping whole files.
+* text=auto eol=crlf
+*.png binary
+*.ico binary
+*.svg text eol=crlf

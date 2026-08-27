@@ -210,24 +210,8 @@ mod win {
 }
 
 #[cfg(windows)]
-pub fn scan_ble_batteries() -> Vec<BleBatteryInfo> {
-    win::scan_ble_batteries()
-}
-
-#[cfg(windows)]
 pub fn read_all_devices() -> Vec<DeviceReading> {
     win::read_all_devices()
-}
-
-#[cfg(not(windows))]
-pub fn scan_ble_batteries() -> Vec<BleBatteryInfo> {
-    vec![BleBatteryInfo {
-        ok: false,
-        name: String::new(),
-        percent: None,
-        device_id: String::new(),
-        error: Some("BLE GATT battery requires Windows".into()),
-    }]
 }
 
 #[cfg(not(windows))]

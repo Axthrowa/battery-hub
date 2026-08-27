@@ -16,6 +16,7 @@ mod winbt {
     use std::os::windows::io::{FromRawHandle, RawHandle};
     use std::ptr;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
     type Handle = *mut std::ffi::c_void;
@@ -373,6 +374,46 @@ mod winbt {
         failed_at > 0 && crate::devices::now_ms().saturating_sub(failed_at) < SPP_COOLDOWN_MS
     }
 
+    /// Walking the Bluetooth device tree is by far the most expensive thing in
+    /// a poll — five seconds, against under one for every other reader put
+    /// together — and while the SPP probe is cooling down it can only ever
+    /// produce the answer it produced last time. So the answer is kept and the
+    /// walk is skipped.
+    ///
+    /// Kept for much less than the cooldown, though: this is the one reading
+    /// that says whether a radio is still there, and a headset that has been
+    /// switched off should not go on being reported for five minutes.
+    const PRESENCE_TTL_MS: u64 = 45_000;
+
+    fn presence_cache() -> &'static Mutex<Option<(String, String, u64)>> {
+        static CACHE: OnceLock<Mutex<Option<(String, String, u64)>>> = OnceLock::new();
+        CACHE.get_or_init(|| Mutex::new(None))
+    }
+
+    fn remember_presence(product: &str, port: &str) {
+        if let Ok(mut cache) = presence_cache().lock() {
+            *cache = Some((
+                product.to_string(),
+                port.to_string(),
+                crate::devices::now_ms(),
+            ));
+        }
+    }
+
+    fn cached_cooling_reading() -> Option<DeviceReading> {
+        let (product, port, at_ms) = presence_cache().lock().ok()?.clone()?;
+        if crate::devices::now_ms().saturating_sub(at_ms) >= PRESENCE_TTL_MS {
+            return None;
+        }
+        Some(DeviceReading::failed(
+            Brand::soundcore(),
+            product,
+            "Bluetooth",
+            format!("Found on {port}; SPP battery probe backing off after a failure."),
+            true,
+        ))
+    }
+
     fn spp_query_battery(port: &str) -> Option<u8> {
         let path = format!(r"\\.\{port}");
         let wide = to_wide(&path);
@@ -451,6 +492,13 @@ mod winbt {
     }
 
     pub fn read() -> DeviceReading {
+        // Nothing below can produce a new answer while the SPP probe is cooling
+        // down, so do not pay for the Bluetooth walk to arrive at the old one.
+        if spp_cooling_down() {
+            if let Some(cached) = cached_cooling_reading() {
+                return cached;
+            }
+        }
         // GATT 0x180F is already covered by the generic BLE reader, which runs
         // in its own poll thread — scanning again here would double the work.
         // Windows battery property first, then SPP.
@@ -461,6 +509,7 @@ mod winbt {
             // 2) Device present — try SPP/COM.
             if let Some(port) = find_soundcore_com_port() {
                 if spp_cooling_down() {
+                    remember_presence(&reading.product, &port);
                     return DeviceReading::failed(
                         Brand::soundcore(),
                         reading.product,
@@ -480,6 +529,7 @@ mod winbt {
                     );
                 }
                 SPP_FAILED_AT_MS.store(crate::devices::now_ms(), Ordering::Relaxed);
+                remember_presence(&reading.product, &port);
                 return DeviceReading::failed(
                     Brand::soundcore(),
                     reading.product,

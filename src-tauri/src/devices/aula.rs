@@ -181,12 +181,9 @@ fn ask(dev: &HidDevice, command: &[u8], marker: u8, retries: u32) -> Option<Vec<
             let mut buf = [0u8; 64];
             // A read error here is the endpoint having nothing yet, not the
             // device refusing — keep waiting out the window.
-            let read = match dev.read_timeout(&mut buf, READ_SLICE_MS) {
-                Ok(read) => read,
-                Err(_) => {
-                    errors += 1;
-                    continue;
-                }
+            let Ok(read) = dev.read_timeout(&mut buf, READ_SLICE_MS) else {
+                errors += 1;
+                continue;
             };
             if read == 0 {
                 empties += 1;

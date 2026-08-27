@@ -69,8 +69,6 @@ async function safeInvoke<T>(cmd: string, args?: Record<string, unknown>): Promi
   }
 }
 
-export const readBattery = () => safeInvoke<BatteryReading>("get_battery");
-export const readDevices = () => safeInvoke<DeviceSnapshot>("get_devices");
 export const lastReading = () => safeInvoke<BatteryReading | null>("last_reading");
 export const lastDevices = () => safeInvoke<DeviceSnapshot | null>("last_devices");
 export const requestRefresh = () => safeInvoke<void>("refresh_now");
@@ -78,21 +76,7 @@ export const setPollSeconds = (seconds: number) => safeInvoke<void>("set_poll_se
 /** Whether the toasts Rust raises are allowed to make a sound. */
 export const setNotificationSound = (enabled: boolean) =>
   safeInvoke<void>("set_notification_sound", { enabled });
-export const hideToTray = () => safeInvoke<void>("close_to_tray");
 export const closeToTray = () => safeInvoke<void>("close_to_tray");
-export const quitApp = () => safeInvoke<void>("quit_app");
-
-/** WinRT BLE GATT Battery Service (0x180F) scan. */
-export interface BleBatteryInfo {
-  ok: boolean;
-  name: string;
-  percent: number | null;
-  deviceId: string;
-  error: string | null;
-}
-
-export const readBluetoothBattery = () =>
-  safeInvoke<BleBatteryInfo[]>("read_bluetooth_battery");
 
 /** A byte the scan believes could be a state of charge. */
 export interface CandidateValue {

@@ -500,11 +500,6 @@ pub fn any_radio_present() -> bool {
         || aula::receiver_present()
 }
 
-/// Primary device across every brand — not just the Razer link.
-pub fn read_battery() -> BatteryReading {
-    read_all().primary
-}
-
 
 #[cfg(test)]
 mod tests {

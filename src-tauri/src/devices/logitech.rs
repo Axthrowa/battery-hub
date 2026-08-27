@@ -21,7 +21,6 @@ const SHORT_LEN: usize = 7;
 const LONG_LEN: usize = 20;
 
 const FEAT_BATTERY_STATUS: u16 = 0x1000;
-const FEAT_BATTERY_VOLTAGE: u16 = 0x1001;
 const FEAT_UNIFIED_BATTERY: u16 = 0x1004;
 const FEAT_DEVICE_NAME: u16 = 0x0005;
 const SW_ID: u8 = 0x0A;
@@ -403,8 +402,7 @@ fn try_device_index(dev: &HidDevice, device_index: u8) -> Option<(u8, bool)> {
             return Some(remember(device_index, note("status(0x1000)", v)));
         }
     }
-    // 0x1001 is voltage — skip as percent source.
-    let _ = FEAT_BATTERY_VOLTAGE;
+    // 0x1001 is BatteryVoltage: millivolts, not a percentage, so no use here.
     read_hidpp10_battery(dev, device_index)
         .map(|v| remember(device_index, note("hid++1.0(0x0D)", v)))
         .or_else(|| recent(device_index))
