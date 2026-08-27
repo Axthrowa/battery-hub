@@ -74,6 +74,9 @@ struct ChargeWatch {
     climbed: bool,
     /// The claim stopped being believed — see `judge_charge`.
     stale: bool,
+    /// The device is claiming the cable right now. A watch is kept after the
+    /// claim goes out, so the next one can be told apart from the first.
+    active: bool,
 }
 
 /// What a device claiming the cable is actually doing.
@@ -141,6 +144,20 @@ fn judge_charge(watch: &mut ChargeWatch, percent: u8, now: u64) -> Charge {
         Charge::Full
     } else {
         Charge::Filling
+    }
+}
+
+/// Bring a kept watch back for a claim that has just come round again.
+///
+/// A device that really went on a charger in between says so in its level, and
+/// `judge_charge` reads that as a gain on the next poll. One whose receiver is
+/// repeating an old frame says nothing new, and must not buy another grace
+/// period every time the flag flickers — that is the false bolt coming back a
+/// few minutes at a time, which is exactly what it looks like from the panel.
+fn reactivate(watch: &mut ChargeWatch, now: u64) {
+    watch.active = true;
+    if !watch.stale {
+        watch.since_ms = now;
     }
 }
 
@@ -505,7 +522,11 @@ fn apply_charge_state(app: &AppHandle, shared: &Shared, snapshot: &mut DeviceSna
                 since_ms: now,
                 climbed: false,
                 stale: false,
+                active: true,
             });
+            if !entry.active {
+                reactivate(entry, now);
+            }
             match judge_charge(entry, percent, now) {
                 Charge::Full => {
                     device.full = true;
@@ -517,16 +538,25 @@ fn apply_charge_state(app: &AppHandle, shared: &Shared, snapshot: &mut DeviceSna
                     device.full = false;
                 }
             }
-        } else {
+        } else if let Some(entry) = watch.get_mut(&key) {
             device.full = false;
-            // Off the cable: it finished if it had got near full while on it.
-            // The level itself is no use at this moment — a voltage gauge drops
-            // the instant the charger stops holding it up.
-            if let Some(previous) = watch.remove(&key) {
-                if completed_on_unplug(&previous) {
-                    finished.push(key);
+            if entry.active {
+                entry.active = false;
+                // Off the cable: it finished if it had got near full while on
+                // it. The level itself is no use at this moment — a voltage
+                // gauge drops the instant the charger stops holding it up.
+                if completed_on_unplug(entry) {
+                    finished.push(key.clone());
                 }
             }
+            // A watch that was believed is finished business. A disbelieved one
+            // is remembered, so the same echo cannot present itself as a fresh
+            // claim; only the level rising clears it.
+            if !entry.stale {
+                watch.remove(&key);
+            }
+        } else {
+            device.full = false;
         }
     }
     drop(watch);
@@ -1133,6 +1163,7 @@ mod tests {
             since_ms: now,
             climbed: false,
             stale: false,
+            active: true,
         }
     }
 
@@ -1241,6 +1272,42 @@ mod tests {
             Charge::Disbelieved
         );
         assert!(!completed_on_unplug(&watch));
+    }
+
+    /// The Ajazz flag does not sit still: it goes out for a poll or two and
+    /// comes back. Handing each return a fresh grace period puts the bolt back
+    /// on the card for three minutes at a time, forever.
+    #[test]
+    fn a_flickering_claim_does_not_buy_another_grace_period() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(92, start);
+        assert_eq!(
+            judge_charge(&mut watch, 92, start + CHARGE_GRACE_MS),
+            Charge::Disbelieved
+        );
+
+        // The flag drops, then comes back an hour later on the same level.
+        watch.active = false;
+        let again = start + 60 * MINUTE;
+        reactivate(&mut watch, again);
+        assert_eq!(
+            judge_charge(&mut watch, 92, again),
+            Charge::Disbelieved,
+            "the same echo must not read as a fresh claim"
+        );
+    }
+
+    /// But a charge that really starts later still gets believed: the level is
+    /// what clears it, and the level is what a real charge moves.
+    #[test]
+    fn a_real_charge_after_a_flicker_is_still_believed() {
+        let start = 10 * MINUTE;
+        let mut watch = watch_at(92, start);
+        judge_charge(&mut watch, 92, start + CHARGE_GRACE_MS);
+        watch.active = false;
+        let again = start + 60 * MINUTE;
+        reactivate(&mut watch, again);
+        assert_eq!(judge_charge(&mut watch, 93, again), Charge::Filling);
     }
 
     #[test]
