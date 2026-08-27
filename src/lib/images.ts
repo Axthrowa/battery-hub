@@ -18,14 +18,37 @@ export interface ImageTarget {
   height: number;
 }
 
-/** The window at 1.5x its default size, so it stays sharp when resized. */
+/**
+ * Fallbacks, for the one case where the frame cannot be measured: it is not on
+ * screen yet. Every real frame is measured instead — see `targetFrom`.
+ */
 export const BACKGROUND_TARGET: ImageTarget = { width: 800, height: 1100 };
-
-/** The device list is as wide as the panel and grows with the cards. */
 export const DEVICES_TARGET: ImageTarget = { width: 900, height: 700 };
+export const CARD_TARGET: ImageTarget = { width: 900, height: 280 };
 
-/** One card, at twice the size it takes in the two-column layout. */
-export const CARD_TARGET: ImageTarget = { width: 480, height: 300 };
+/** Twice the frame's own pixels, which is as much as a screen can show of it. */
+const OVERSAMPLE = 2;
+/** Past this the file grows faster than the picture improves. */
+const MAX_EDGE = 1400;
+
+/**
+ * The size a picture should be stored at, taken from the frame it will fill.
+ *
+ * Guessing these was a mistake worth not repeating: the window can be resized,
+ * the device list grows with the number of cards, and the card grid goes from
+ * one column to two when the window is wide enough. A number written down here
+ * is wrong for most of those, and `cover` then quietly crops away whatever did
+ * not fit — which from the outside looks like the picture being cut in half.
+ * The element knows its own shape, so it is asked.
+ */
+export function targetFrom(element: HTMLElement | null, fallback: ImageTarget): ImageTarget {
+  if (!element) return fallback;
+  const width = element.clientWidth;
+  const height = element.clientHeight;
+  if (width < 40 || height < 40) return fallback;
+  const scale = Math.min(OVERSAMPLE, MAX_EDGE / Math.max(width, height));
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
+}
 
 const QUALITY = 0.82;
 

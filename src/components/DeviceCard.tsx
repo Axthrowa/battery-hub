@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import type { DeviceReading } from "../lib/bridge";
 import { BrandLogo, brandAccent } from "./BrandLogo";
 import { levelColor } from "./BatteryRing";
@@ -66,7 +67,8 @@ interface DeviceCardProps {
   unverifiedHint?: string;
   /** A backdrop of the user's own, cropped on import — see `lib/images.ts`. */
   image?: string;
-  onPickImage?: () => void;
+  /** Handed the card element, so the picture is cut to the frame it will fill. */
+  onPickImage?: (frame: HTMLElement | null) => void;
   onClearImage?: () => void;
   pickImageLabel?: string;
   clearImageLabel?: string;
@@ -92,6 +94,7 @@ export function DeviceCard({
   pickImageLabel,
   clearImageLabel,
 }: DeviceCardProps) {
+  const frame = useRef<HTMLElement>(null);
   const online = device.ok;
   const percent = device.percent;
   const color = levelColor(percent, online);
@@ -108,6 +111,7 @@ export function DeviceCard({
 
   return (
     <article
+      ref={frame}
       className="card-enter group rounded-2xl border border-white/10 bg-ink-850/75 p-3.5 backdrop-blur-sm transition hover:border-white/18"
       style={{
         animationDelay: `${index * 55}ms`,
@@ -207,7 +211,7 @@ export function DeviceCard({
           <span className="flex gap-1 opacity-0 transition group-hover:opacity-100">
             <button
               type="button"
-              onClick={onPickImage}
+              onClick={() => onPickImage(frame.current)}
               title={pickImageLabel}
               aria-label={pickImageLabel}
               className="grid h-5 w-5 place-items-center rounded text-neutral-500 transition hover:bg-white/10 hover:text-neutral-200"

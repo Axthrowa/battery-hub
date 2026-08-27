@@ -6,15 +6,14 @@ import type { Background, Locale } from "../i18n/resources";
 import { useSettings } from "../context/SettingsContext";
 import { setNotificationSoundFile, testNotificationSound } from "../lib/bridge";
 import type { SoundKind } from "../lib/bridge";
-import { BACKGROUND_TARGET, DEVICES_TARGET } from "../lib/images";
-import type { ImageTarget } from "../lib/images";
+
 import type { Theme } from "../context/SettingsContext";
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
-  /** Pick a picture and place it in the frame — see `ImageCropModal`. */
-  requestImage: (target: ImageTarget) => Promise<string | null>;
+  /** Pick a picture and place it in the named frame — see `ImageCropModal`. */
+  requestImage: (which: "background" | "devices") => Promise<string | null>;
 }
 
 const LOCALES: { id: Locale; labelKey: "turkish" | "english"; flag: string }[] = [
@@ -201,9 +200,9 @@ export function SettingsModal({ open, onClose, requestImage }: SettingsModalProp
     await update(kind === "full" ? { soundFileFull: null } : { soundFileLow: null });
   };
 
-  const chooseImage = async (target: ImageTarget, key: "backgroundImage" | "devicesImage") => {
-    const uri = await requestImage(target);
-    if (uri) await update({ [key]: uri });
+  const chooseImage = async (which: "background" | "devices") => {
+    const uri = await requestImage(which);
+    if (uri) await update({ [which === "background" ? "backgroundImage" : "devicesImage"]: uri });
   };
 
   if (!open) return null;
@@ -388,13 +387,10 @@ export function SettingsModal({ open, onClose, requestImage }: SettingsModalProp
           <Section title={t("images")}>
             <PickRow
               label={t("backgroundImage")}
-              hint={t("imageHint", {
-                width: BACKGROUND_TARGET.width,
-                height: BACKGROUND_TARGET.height,
-              })}
+              hint={t("imageAutoHint")}
               current={settings.backgroundImage ? t("imageSet") : null}
               fallback={t("imageNone")}
-              onChoose={() => void chooseImage(BACKGROUND_TARGET, "backgroundImage")}
+              onChoose={() => void chooseImage("background")}
               onClear={() => void update({ backgroundImage: null })}
               chooseLabel={t("choose")}
               clearLabel={t("remove")}
@@ -402,13 +398,10 @@ export function SettingsModal({ open, onClose, requestImage }: SettingsModalProp
             />
             <PickRow
               label={t("devicesImage")}
-              hint={t("imageHint", {
-                width: DEVICES_TARGET.width,
-                height: DEVICES_TARGET.height,
-              })}
+              hint={t("imageAutoHint")}
               current={settings.devicesImage ? t("imageSet") : null}
               fallback={t("imageNone")}
-              onChoose={() => void chooseImage(DEVICES_TARGET, "devicesImage")}
+              onChoose={() => void chooseImage("devices")}
               onClear={() => void update({ devicesImage: null })}
               chooseLabel={t("choose")}
               clearLabel={t("remove")}

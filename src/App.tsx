@@ -6,7 +6,14 @@ import { SettingsModal } from "./components/SettingsModal";
 import { useSettings } from "./context/SettingsContext";
 import type { BatteryReading, DeviceReading, DeviceSnapshot } from "./lib/bridge";
 import { ImageCropModal } from "./components/ImageCropModal";
-import { CARD_TARGET, pickImageFile, useCardImages } from "./lib/images";
+import {
+  BACKGROUND_TARGET,
+  CARD_TARGET,
+  DEVICES_TARGET,
+  pickImageFile,
+  targetFrom,
+  useCardImages,
+} from "./lib/images";
 import type { ImageTarget } from "./lib/images";
 import { pickLogoFile, useLogos } from "./lib/logos";
 import {
@@ -58,6 +65,7 @@ export default function App() {
     resolve: (uri: string | null) => void;
   } | null>(null);
   const timeoutRef = useRef<number | null>(null);
+  const devicesFrame = useRef<HTMLElement>(null);
 
   const applyReading = useCallback((value: BatteryReading | null) => {
     if (!value) return;
@@ -132,15 +140,28 @@ export default function App() {
 
   // Pick, then place: every frame in the app goes through the same two steps,
   // so the dialog lives here once and hands the result back to whoever asked.
-  const requestImage = useCallback(async (target: ImageTarget) => {
-    const file = await pickImageFile();
-    if (!file) return null;
-    return new Promise<string | null>((resolve) => setCropping({ file, target, resolve }));
-  }, []);
+  const requestImage = useCallback(
+    async (frame: HTMLElement | null, fallback: ImageTarget) => {
+      const file = await pickImageFile();
+      if (!file) return null;
+      const target = targetFrom(frame, fallback);
+      return new Promise<string | null>((resolve) => setCropping({ file, target, resolve }));
+    },
+    [],
+  );
+
+  // The settings panel names the frame; only this side knows where it is.
+  const requestPanelImage = useCallback(
+    (which: "background" | "devices") =>
+      which === "background"
+        ? requestImage(document.documentElement, BACKGROUND_TARGET)
+        : requestImage(devicesFrame.current, DEVICES_TARGET),
+    [requestImage],
+  );
 
   const pickCardImage = useCallback(
-    async (name: string) => {
-      const picture = await requestImage(CARD_TARGET);
+    async (name: string, frame: HTMLElement | null) => {
+      const picture = await requestImage(frame, CARD_TARGET);
       if (picture) await setCardImage(name, picture);
     },
     [requestImage, setCardImage],
@@ -183,6 +204,7 @@ export default function App() {
       </header>
 
       <section
+        ref={devicesFrame}
         className={`min-h-0 flex-1 overflow-y-auto ${
           settings.devicesImage ? "rounded-2xl p-2.5" : "pr-0.5"
         }`}
@@ -226,9 +248,9 @@ export default function App() {
               unverifiedLabel={t("unverified")}
               unverifiedHint={t("unverifiedHint")}
               image={cardImageFor(device.product)}
-              onPickImage={() => void pickCardImage(device.product)}
+              onPickImage={(frame) => void pickCardImage(device.product, frame)}
               onClearImage={() => void clearCardImage(device.product)}
-              pickImageLabel={`${t("cardImage")} · ${CARD_TARGET.width}×${CARD_TARGET.height}`}
+              pickImageLabel={t("cardImage")}
               clearImageLabel={t("removeCardImage")}
             />
           ))}
@@ -286,7 +308,7 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        requestImage={requestImage}
+        requestImage={requestPanelImage}
       />
 
       {cropping ? (
