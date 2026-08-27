@@ -88,9 +88,15 @@ fn model_cache() -> &'static Mutex<HashMap<(u16, u16), String>> {
 /// even after the retries above. Reporting "no answer" on those polls hands the
 /// card back to whatever weaker source is describing the same keyboard — a
 /// taught byte, typically — and the percentage visibly flips between the two.
-/// A charge level does not move in the minutes a dropped frame costs, so the
-/// last real answer is served instead, stamped with when it was measured.
-const READING_TTL: Duration = Duration::from_secs(5 * 60);
+/// A charge level does not move in the seconds a dropped frame costs, so the
+/// last real level is served instead, stamped with when it was measured.
+///
+/// A minute is enough for that. The five it used to be was sized against the
+/// taught byte taking over, and `hid::covered_by_a_reader` now keeps the taught
+/// reader off this hardware entirely, so there is nothing left to flip to — and
+/// a keyboard that has been switched off leaves the panel while the person who
+/// switched it off is still looking at it.
+const READING_TTL: Duration = Duration::from_secs(60);
 
 /// The level only — never the charging flag that came with it. Pulling the
 /// cable is one of the commonest reasons a keyboard drops a frame, so a cached

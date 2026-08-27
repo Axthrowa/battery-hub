@@ -294,11 +294,17 @@ fn read_hidpp10_battery(dev: &HidDevice, device_index: u8) -> Option<(u8, bool)>
 
 /// Last real level per receiver slot.
 ///
-/// A mouse that has gone to sleep answers nothing, and the older battery
-/// features on the same receiver will happily answer in its place with numbers
-/// that describe no device. Holding the last true level for a few minutes keeps
-/// the card populated across a nap without ever showing an invented one.
-const READING_TTL: Duration = Duration::from_secs(5 * 60);
+/// The 2.4 GHz link drops the odd exchange, and reporting "no answer" on those
+/// polls takes the card off the panel and puts it back a poll later. Holding
+/// the last true level bridges that.
+///
+/// It used to be held for five minutes, because the older battery features on
+/// the same receiver would answer in place of a sleeping mouse and the cache
+/// was the only thing standing between that and the panel. `carries_unified`
+/// now stops those at the source, so the cache is back to the small job it was
+/// meant for — and a mouse that has actually been put away leaves the panel in
+/// a minute rather than five.
+const READING_TTL: Duration = Duration::from_secs(60);
 
 struct LastReading {
     percent: u8,
@@ -323,6 +329,27 @@ fn unified_slots() -> &'static Mutex<HashSet<u8>> {
 fn note_unified(device_index: u8) {
     if let Ok(mut slots) = unified_slots().lock() {
         slots.insert(device_index);
+    }
+}
+
+/// Resolved model name per receiver slot.
+///
+/// Asking costs three HID++ round trips and the answer does not change while
+/// the mouse stays paired, so it is asked once. That also means a mouse that
+/// has fallen asleep keeps the name it gave when it was awake, instead of
+/// whatever its silence spells out.
+fn name_cache() -> &'static Mutex<HashMap<u8, String>> {
+    static CACHE: OnceLock<Mutex<HashMap<u8, String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cached_name(device_index: u8) -> Option<String> {
+    name_cache().lock().ok()?.get(&device_index).cloned()
+}
+
+fn remember_name(device_index: u8, name: &str) {
+    if let Ok(mut cache) = name_cache().lock() {
+        cache.insert(device_index, name.to_string());
     }
 }
 
@@ -464,7 +491,21 @@ fn read_device_name(dev: &HidDevice, device_index: u8) -> Option<String> {
     }
 
     let trimmed = name.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
+    looks_like_a_name(trimmed).then(|| trimmed.to_string())
+}
+
+/// Whether what came back reads as a product name at all.
+///
+/// The loop above keeps whatever printable bytes arrive, and a receiver
+/// answering for a mouse that has gone to sleep returns a frame filled with one
+/// repeated byte. Here that byte is `0x77`, which is how a PRO X2 SUPERSTRIKE
+/// came to sit on the panel labelled `wwwwwwww`.
+fn looks_like_a_name(name: &str) -> bool {
+    let mut rest = name.chars();
+    let Some(first) = rest.next() else {
+        return false;
+    };
+    name.len() >= 3 && rest.any(|c| c != first)
 }
 
 fn probe_device(dev: &HidDevice, product: &str) -> Option<DeviceReading> {
@@ -476,8 +517,12 @@ fn probe_device(dev: &HidDevice, product: &str) -> Option<DeviceReading> {
     };
     for &index in indices {
         if let Some((percent, charging)) = try_device_index(dev, index) {
-            let name = read_device_name(dev, index)
-                .filter(|found| !is_receiver_name(found))
+            let name = cached_name(index)
+                .or_else(|| {
+                    read_device_name(dev, index)
+                        .filter(|found| !is_receiver_name(found))
+                        .inspect(|found| remember_name(index, found))
+                })
                 .unwrap_or_else(|| fallback_label(product));
             return Some(
                 DeviceReading::ok(Brand::classify("Logitech", &name), &name, "2.4 GHz", percent, charging)
@@ -557,5 +602,31 @@ pub fn read() -> DeviceReading {
             present,
         ),
         Err(e) => DeviceReading::failed(Brand::logitech(), "Logitech", "2.4 GHz", e, present),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_a_name;
+
+    #[test]
+    fn a_real_model_name_passes() {
+        assert!(looks_like_a_name("PRO X2 SUPERSTRIKE"));
+        assert!(looks_like_a_name("MX Master 3S"));
+    }
+
+    /// What a sleeping mouse's receiver actually returned: one byte, repeated.
+    #[test]
+    fn a_filled_buffer_is_not_a_name() {
+        assert!(!looks_like_a_name("wwwwwwww"));
+        assert!(!looks_like_a_name("\u{7f}\u{7f}\u{7f}\u{7f}"));
+        assert!(!looks_like_a_name("        ".trim()));
+    }
+
+    #[test]
+    fn nothing_and_near_nothing_are_refused() {
+        assert!(!looks_like_a_name(""));
+        assert!(!looks_like_a_name("K"));
+        assert!(!looks_like_a_name("ab"), "two characters is not a product name");
     }
 }
