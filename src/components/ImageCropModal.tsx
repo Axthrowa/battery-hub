@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { centredCrop, clampCrop, coverScale, renderCrop } from "../lib/images";
+import { BACKDROP_BLUR, centredCrop, clampCrop, coverScale, fitZoom, renderCrop } from "../lib/images";
 import type { Crop, ImageTarget } from "../lib/images";
 
 interface ImageCropModalProps {
@@ -99,6 +99,9 @@ export function ImageCropModal({ file, target, onDone }: ImageCropModalProps) {
   };
 
   const scale = size && crop ? coverScale(size, target) * crop.zoom : 1;
+  // Below this nothing new comes into view, only more empty room around it.
+  const minZoom = size ? fitZoom(size, target) : 1;
+  const zoomedOut = (crop?.zoom ?? 1) < 1;
 
   return (
     <div
@@ -112,7 +115,7 @@ export function ImageCropModal({ file, target, onDone }: ImageCropModalProps) {
         <h2 className="mb-3 text-base font-semibold text-neutral-100">{t("adjustImage")}</h2>
 
         <div
-          className="mx-auto touch-none overflow-hidden rounded-xl border border-white/15 bg-ink-950"
+          className="relative mx-auto touch-none overflow-hidden rounded-xl border border-white/15 bg-ink-950"
           style={{ width: FRAME_WIDTH, height: frameHeight, cursor: drag.current ? "grabbing" : "grab" }}
           onPointerDown={(event) => {
             if (!crop) return;
@@ -128,17 +131,31 @@ export function ImageCropModal({ file, target, onDone }: ImageCropModalProps) {
           }}
         >
           {url && size && crop ? (
-            <img
-              src={url}
-              alt=""
-              draggable={false}
-              className="max-w-none select-none"
-              style={{
-                width: size.width * scale * display,
-                height: size.height * scale * display,
-                transform: `translate(${crop.x * display}px, ${crop.y * display}px)`,
-              }}
-            />
+            <>
+              {zoomedOut ? (
+                // What the render does with the gap, shown here too, so the
+                // preview is not a promise the saved picture will break.
+                <img
+                  src={url}
+                  alt=""
+                  aria-hidden
+                  draggable={false}
+                  className="absolute inset-0 h-full w-full scale-125 object-cover select-none"
+                  style={{ filter: `blur(${BACKDROP_BLUR * display}px)` }}
+                />
+              ) : null}
+              <img
+                src={url}
+                alt=""
+                draggable={false}
+                className="relative max-w-none select-none"
+                style={{
+                  width: size.width * scale * display,
+                  height: size.height * scale * display,
+                  transform: `translate(${crop.x * display}px, ${crop.y * display}px)`,
+                }}
+              />
+            </>
           ) : null}
         </div>
 
@@ -150,11 +167,12 @@ export function ImageCropModal({ file, target, onDone }: ImageCropModalProps) {
           <span className="text-xs text-neutral-400">{t("zoom")}</span>
           <input
             type="range"
-            min={1}
+            min={minZoom}
             max={MAX_ZOOM}
             step={0.02}
             value={crop?.zoom ?? 1}
             onChange={(event) => zoomTo(Number(event.target.value))}
+            disabled={!size}
             className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-ink-700 accent-[var(--color-accent)]"
           />
         </label>

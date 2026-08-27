@@ -51,6 +51,10 @@ export function targetFrom(element: HTMLElement | null, fallback: ImageTarget): 
 }
 
 const QUALITY = 0.82;
+/** Blur is drawn past the edges, or it feathers the frame's border away. */
+const BACKDROP_OVERSCAN = 1.2;
+/** In frame pixels; the preview scales it down with everything else. */
+export const BACKDROP_BLUR = 26;
 
 /**
  * Backdrops kept per device, beside the logos and handled the same way — see
@@ -73,11 +77,11 @@ export function useCardImages() {
 /**
  * Where the picture sits inside the frame, in frame units.
  *
- * `zoom` is a multiple of the smallest size that still covers the frame, so 1
- * is "no empty corners" and anything above it is closer in. `x` and `y` are
- * the top-left of the drawn picture relative to the frame's top-left, which
- * are negative whenever the picture is larger than the frame — which, at zoom
- * 1 or more, it always is.
+ * `zoom` is a multiple of the smallest size that still covers the frame: 1 is
+ * "no empty corners", above it is closer in, and below it the whole picture
+ * starts to fit with room to spare. `x` and `y` are the top-left of the drawn
+ * picture relative to the frame's, so they go negative once it is the larger
+ * of the two.
  */
 export interface Crop {
   zoom: number;
@@ -88,6 +92,16 @@ export interface Crop {
 /** The size at which the picture just covers the frame. */
 export function coverScale(image: { width: number; height: number }, target: ImageTarget): number {
   return Math.max(target.width / image.width, target.height / image.height);
+}
+
+/**
+ * The zoom at which the entire picture is in the frame — never above 1, and
+ * the sensible floor for a slider: below it nothing new comes into view, only
+ * more empty room.
+ */
+export function fitZoom(image: { width: number; height: number }, target: ImageTarget): number {
+  const contain = Math.min(target.width / image.width, target.height / image.height);
+  return contain / coverScale(image, target);
 }
 
 /** Centred, and no more zoomed in than it has to be. */
@@ -103,19 +117,30 @@ export function centredCrop(
   };
 }
 
-/** Hold the picture against the frame's edges: never a gap, never a stray pan. */
+/**
+ * Keep the picture where it can be seen.
+ *
+ * Larger than the frame, it is held against the edges so no gap can open at
+ * one side while there is picture spilling off the other. Smaller — which is
+ * what zooming out past 1 makes it — the rule turns round: it is kept inside,
+ * free to sit anywhere in the room it has.
+ */
+function clampAxis(position: number, drawn: number, frame: number): number {
+  return drawn >= frame
+    ? Math.min(0, Math.max(frame - drawn, position))
+    : Math.max(0, Math.min(frame - drawn, position));
+}
+
 export function clampCrop(
   crop: Crop,
   image: { width: number; height: number },
   target: ImageTarget,
 ): Crop {
   const scale = coverScale(image, target) * crop.zoom;
-  const width = image.width * scale;
-  const height = image.height * scale;
   return {
     zoom: crop.zoom,
-    x: Math.min(0, Math.max(target.width - width, crop.x)),
-    y: Math.min(0, Math.max(target.height - height, crop.y)),
+    x: clampAxis(crop.x, image.width * scale, target.width),
+    y: clampAxis(crop.y, image.height * scale, target.height),
   };
 }
 
@@ -135,6 +160,19 @@ export async function renderCrop(
 
     const placed = clampCrop(crop ?? centredCrop(bitmap, target), bitmap, target);
     const scale = coverScale(bitmap, target) * placed.zoom;
+
+    if (placed.zoom < 1) {
+      // Zoomed out, the picture no longer reaches the edges. Rather than leave
+      // bars, the gap is filled with the picture itself, blurred and slightly
+      // over-sized so the blur has something to reach for at the border.
+      const base = coverScale(bitmap, target) * BACKDROP_OVERSCAN;
+      const width = bitmap.width * base;
+      const height = bitmap.height * base;
+      ctx.filter = `blur(${BACKDROP_BLUR}px)`;
+      ctx.drawImage(bitmap, (target.width - width) / 2, (target.height - height) / 2, width, height);
+      ctx.filter = "none";
+    }
+
     ctx.drawImage(bitmap, placed.x, placed.y, bitmap.width * scale, bitmap.height * scale);
     return canvas.toDataURL("image/jpeg", QUALITY);
   } finally {
