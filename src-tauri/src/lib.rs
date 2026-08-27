@@ -1,6 +1,6 @@
 mod devices;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -41,6 +41,17 @@ const FULL_CHARGE_SOUND: &str = "Default";
 /// Close enough to full that a device dropping its charging flag means it has
 /// finished rather than been unplugged early.
 const FULL_ENOUGH: u8 = 95;
+/// How long a charge has to sit still before it counts as done. Gauges on these
+/// devices are read off the voltage, so a keyboard can stop at 99 and never
+/// claim the last point — it charges to full and simply says 99 until the cable
+/// comes out, at which point it settles back to what the cell really holds.
+const FULL_STALL_MS: u64 = 15 * 60 * 1000;
+
+/// Highest level a device reached while on the cable, and when it got there.
+struct ChargeWatch {
+    peak: u8,
+    since_ms: u64,
+}
 
 const SETTINGS_STORE_FILE: &str = "settings.json";
 const SETTINGS_KEY: &str = "settings";
@@ -81,8 +92,8 @@ struct Shared {
     low_battery_notified: Mutex<HashSet<String>>,
     /// Product keys that already fired a charge-complete toast.
     full_charge_notified: Mutex<HashSet<String>>,
-    /// Product keys seen charging, so the end of it can be recognised.
-    charging_seen: Mutex<HashSet<String>>,
+    /// Highest level each product reached on the cable, and when it got there.
+    charge_watch: Mutex<HashMap<String, ChargeWatch>>,
 }
 
 impl Shared {
@@ -105,7 +116,7 @@ impl Shared {
             shutting_down: AtomicBool::new(false),
             low_battery_notified: Mutex::new(HashSet::new()),
             full_charge_notified: Mutex::new(HashSet::new()),
-            charging_seen: Mutex::new(HashSet::new()),
+            charge_watch: Mutex::new(HashMap::new()),
         }
     }
 
@@ -292,48 +303,102 @@ fn notify_low_battery(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
     }
 }
 
-/// Fires once per product when it finishes charging, and again only after it
-/// leaves the cable. Audible on purpose: the point of the toast is to say the
-/// device can be unplugged without anyone watching the panel for it.
-fn notify_full_charge(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapshot) {
-    let tr = shared.locale.lock().unwrap().starts_with("tr");
-    let mut notified = shared.full_charge_notified.lock().unwrap();
-    let mut charging = shared.charging_seen.lock().unwrap();
-    for device in &snapshot.devices {
+/// Decide what "charging" means for each device this poll, and say so once it
+/// is over.
+///
+/// Readers only report the flag the hardware sets, and hardware is unhelpful
+/// here in two different ways. Some devices sit at 100% still calling
+/// themselves charging. Others read their level off the cell voltage, top out
+/// at 99 and never move again — the charge is done, the number just cannot say
+/// so until the cable comes out and the reading settles back. Both are
+/// recognised by watching the level stop climbing.
+fn apply_charge_state(app: &AppHandle, shared: &Shared, snapshot: &mut DeviceSnapshot) {
+    let now = now_ms();
+    let mut watch = shared.charge_watch.lock().unwrap();
+    let mut finished: Vec<String> = Vec::new();
+
+    for device in &mut snapshot.devices {
         let key = device.product.to_ascii_lowercase();
         let Some(percent) = device.percent.filter(|_| device.ok) else {
             continue;
         };
 
-        // Two ways a device finishes. Some sit on the cable still calling
-        // themselves charging, which is `full`. Others simply drop the flag the
-        // moment they top out, and only the fact that they were charging a poll
-        // ago separates that from someone pulling the cable early.
-        let was_charging = charging.contains(&key);
-        let finished =
-            device.full || (was_charging && !device.charging && percent >= FULL_ENOUGH);
         if device.charging {
-            charging.insert(key.clone());
-        }
-        if !finished {
-            if !device.charging && percent < FULL_ENOUGH {
-                notified.remove(&key);
-                charging.remove(&key);
+            let entry = watch.entry(key.clone()).or_insert(ChargeWatch {
+                peak: percent,
+                since_ms: now,
+            });
+            if percent > entry.peak {
+                entry.peak = percent;
+                entry.since_ms = now;
             }
-            continue;
+            let stalled = now.saturating_sub(entry.since_ms) >= FULL_STALL_MS;
+            device.full = percent >= 100 || (percent >= FULL_ENOUGH && stalled);
+            if device.full {
+                finished.push(key);
+            }
+        } else {
+            device.full = false;
+            // Off the cable: it finished if it had got near full while on it.
+            // The level itself is no use at this moment — a voltage gauge drops
+            // the instant the charger stops holding it up.
+            if let Some(previous) = watch.remove(&key) {
+                if previous.peak >= FULL_ENOUGH {
+                    finished.push(key);
+                }
+            }
         }
+    }
+    drop(watch);
+
+    snapshot.online = snapshot.devices.iter().filter(|d| d.ok).cloned().collect();
+    notify_full_charge(app, shared, snapshot, &finished);
+}
+
+/// Fires once per product when its charge completes, and again only after it
+/// has been used enough to need another one. Audible on purpose: the point is
+/// to say the cable can come out without anyone watching the panel for it.
+fn notify_full_charge(
+    app: &AppHandle,
+    shared: &Shared,
+    snapshot: &DeviceSnapshot,
+    finished: &[String],
+) {
+    let tr = shared.locale.lock().unwrap().starts_with("tr");
+    let mut notified = shared.full_charge_notified.lock().unwrap();
+
+    // Anything charging again, or run down since, may announce itself afresh.
+    for device in &snapshot.devices {
+        let key = device.product.to_ascii_lowercase();
+        let draining = device.percent.is_some_and(|p| p < FULL_ENOUGH);
+        if draining && !device.charging {
+            notified.remove(&key);
+        }
+    }
+
+    for key in finished {
         if !notified.insert(key.clone()) {
             continue;
         }
-        let product = if device.product.trim().is_empty() {
-            device.brand_label.clone()
-        } else {
-            device.product.clone()
-        };
+        let product = snapshot
+            .devices
+            .iter()
+            .find(|d| d.product.to_ascii_lowercase() == *key)
+            .map(|d| {
+                if d.product.trim().is_empty() {
+                    d.brand_label.clone()
+                } else {
+                    d.product.clone()
+                }
+            })
+            .unwrap_or_else(|| key.clone());
         let (title, body) = if tr {
             ("Şarj tamamlandı".to_string(), format!("{product} tam dolu"))
         } else {
-            ("Charging complete".to_string(), format!("{product} is fully charged"))
+            (
+                "Charging complete".to_string(),
+                format!("{product} is fully charged"),
+            )
         };
         devices::diagnostics::emit_line(&format!("[notify] {body}"));
         if let Err(err) = app
@@ -345,7 +410,7 @@ fn notify_full_charge(app: &AppHandle, shared: &Shared, snapshot: &DeviceSnapsho
             .show()
         {
             eprintln!("full-charge notification failed: {err}");
-            notified.remove(&key);
+            notified.remove(key);
         }
     }
 }
@@ -457,7 +522,8 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>) {
         devices::diagnostics::run_poll_diagnostics();
 
         // Four concurrent brand reader threads (see devices::read_all).
-        let snapshot = devices::read_all();
+        let mut snapshot = devices::read_all();
+        apply_charge_state(&app, &shared, &mut snapshot);
         for d in &snapshot.devices {
             let line = match (d.ok, d.percent) {
                 (true, Some(p)) => format!(
@@ -488,7 +554,6 @@ fn poll_loop(app: AppHandle, shared: Arc<Shared>) {
         *shared.last_snapshot.lock().unwrap() = Some(snapshot.clone());
         apply_tray(&app, &shared);
         notify_low_battery(&app, &shared, &snapshot);
-        notify_full_charge(&app, &shared, &snapshot);
 
         if main_window_alive(&app) {
             let _ = app.emit(EVENT_BATTERY, &snapshot.primary);

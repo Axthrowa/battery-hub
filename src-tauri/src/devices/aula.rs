@@ -90,7 +90,7 @@ fn model_cache() -> &'static Mutex<HashMap<(u16, u16), String>> {
 /// taught byte, typically — and the percentage visibly flips between the two.
 /// A charge level does not move in the minutes a dropped frame costs, so the
 /// last real answer is served instead, stamped with when it was measured.
-const READING_TTL: Duration = Duration::from_secs(15 * 60);
+const READING_TTL: Duration = Duration::from_secs(5 * 60);
 
 struct LastReading {
     percent: u8,
