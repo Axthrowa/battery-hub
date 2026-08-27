@@ -184,10 +184,22 @@ a build box here, not a test bench.
 
 ## Installing
 
-`npm run tauri:build` produces the NSIS installer, and once it is signed Smart
-App Control runs it like any other signed binary. Sign the installer as well as
-the executable inside it — SAC judges each file on its own, so an unsigned
-installer wrapping a signed exe still gets refused.
+`npm run tauri:build` produces the NSIS installer — but not on a machine where
+Smart App Control is enforcing, because the Windows-side `cargo build` it runs
+dies on its own unsigned build scripts. `scripts/installer/installer.nsi` is the
+same installer as a standalone script, so it can be built from the cross-
+compiled binary with the NSIS that Tauri already caches:
+
+```powershell
+makensis installer.nsi     # %LOCALAPPDATA%\tauri\NSIS\makensis.exe
+scripts\sign-portable.ps1 -ExePath ".\Battery Hub_0.1.0_x64-setup.exe"
+```
+
+Sign the installer as well as the executable inside it — SAC judges each file on
+its own, and that cuts both ways: a signed installer of its own can be allowed
+while the application it lays down is still refused. That is why the install
+step keeps the previous `battery-hub.exe` as `onceki-battery-hub.exe`; without
+it, installing a build SAC will not run leaves the machine with no working copy.
 
 `scripts/install/` does the same job in plain PowerShell, for the times a fresh
 installer is still waiting on its verdict. Copy the signed `battery-hub.exe`,
