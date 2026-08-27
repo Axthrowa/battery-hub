@@ -1,3 +1,5 @@
+import { useImageMap } from "./imageMap";
+
 /**
  * Bringing a picture in from disk.
  *
@@ -22,7 +24,28 @@ export const BACKGROUND_TARGET: ImageTarget = { width: 800, height: 1100 };
 /** The device list is as wide as the panel and grows with the cards. */
 export const DEVICES_TARGET: ImageTarget = { width: 900, height: 700 };
 
+/** One card, at twice the size it takes in the two-column layout. */
+export const CARD_TARGET: ImageTarget = { width: 480, height: 300 };
+
 const QUALITY = 0.82;
+
+/**
+ * Backdrops kept per device, beside the logos and handled the same way — see
+ * `imageMap`. A separate store because they are a different size of thing:
+ * losing every card's picture should not be the price of clearing the logos.
+ */
+export function useCardImages() {
+  const { imageFor, setImage, clearImage, moveImage } = useImageMap(
+    "card-images.json",
+    "cardImages",
+  );
+  return {
+    cardImageFor: imageFor,
+    setCardImage: setImage,
+    clearCardImage: clearImage,
+    moveCardImage: moveImage,
+  };
+}
 
 /** Centre-crop to the frame's shape, scale to its size, re-encode as JPEG. */
 export async function toCroppedDataUri(file: File, target: ImageTarget): Promise<string> {

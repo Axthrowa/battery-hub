@@ -23,6 +23,17 @@ function FullMark({ color, title }: { color: string; title?: string }) {
   );
 }
 
+/** The affordance for giving a card its own backdrop. */
+function ImageIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <circle cx="8.5" cy="9.5" r="1.6" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="m3.5 17 5-4.5 4 3.5 3-2.5 5 4" />
+    </svg>
+  );
+}
+
 /** Mains power, at the size of the percentage it sits next to. */
 function ChargingBolt({ color, title }: { color: string; title?: string }) {
   return (
@@ -53,6 +64,12 @@ interface DeviceCardProps {
   clearLogoLabel?: string;
   unverifiedLabel?: string;
   unverifiedHint?: string;
+  /** A backdrop of the user's own, cropped on import — see `lib/images.ts`. */
+  image?: string;
+  onPickImage?: () => void;
+  onClearImage?: () => void;
+  pickImageLabel?: string;
+  clearImageLabel?: string;
 }
 
 export function DeviceCard({
@@ -69,6 +86,11 @@ export function DeviceCard({
   clearLogoLabel,
   unverifiedLabel,
   unverifiedHint,
+  image,
+  onPickImage,
+  onClearImage,
+  pickImageLabel,
+  clearImageLabel,
 }: DeviceCardProps) {
   const online = device.ok;
   const percent = device.percent;
@@ -86,10 +108,23 @@ export function DeviceCard({
 
   return (
     <article
-      className="card-enter rounded-2xl border border-white/10 bg-ink-850/75 p-3.5 backdrop-blur-sm transition hover:border-white/18"
+      className="card-enter group rounded-2xl border border-white/10 bg-ink-850/75 p-3.5 backdrop-blur-sm transition hover:border-white/18"
       style={{
         animationDelay: `${index * 55}ms`,
         boxShadow: online ? `inset 0 0 0 1px ${accent}18` : undefined,
+        // The veil is what keeps the reading legible on top of a picture, and
+        // it deepens downwards where the number and the bar sit.
+        ...(image
+          ? {
+              backgroundImage:
+                "linear-gradient(180deg," +
+                " color-mix(in srgb, var(--color-ink-850) 55%, transparent)," +
+                " color-mix(in srgb, var(--color-ink-850) 84%, transparent))," +
+                `url(${image})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+            }
+          : null),
       }}
     >
       <div className="mb-3 flex items-start gap-3">
@@ -166,7 +201,33 @@ export function DeviceCard({
         />
       </div>
 
-      <p className="mt-2 text-[10px] tabular-nums text-neutral-600">{timeLabel}</p>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="text-[10px] tabular-nums text-neutral-600">{timeLabel}</p>
+        {onPickImage ? (
+          <span className="flex gap-1 opacity-0 transition group-hover:opacity-100">
+            <button
+              type="button"
+              onClick={onPickImage}
+              title={pickImageLabel}
+              aria-label={pickImageLabel}
+              className="grid h-5 w-5 place-items-center rounded text-neutral-500 transition hover:bg-white/10 hover:text-neutral-200"
+            >
+              <ImageIcon />
+            </button>
+            {image ? (
+              <button
+                type="button"
+                onClick={onClearImage}
+                title={clearImageLabel}
+                aria-label={clearImageLabel}
+                className="grid h-5 w-5 place-items-center rounded text-[11px] leading-none text-neutral-500 transition hover:bg-white/10 hover:text-red-300"
+              >
+                ✕
+              </button>
+            ) : null}
+          </span>
+        ) : null}
+      </div>
     </article>
   );
 }

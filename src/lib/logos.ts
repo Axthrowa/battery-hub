@@ -1,41 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { isTauri } from "./bridge";
+import { imageKey, useImageMap } from "./imageMap";
+import type { ImageMap } from "./imageMap";
 
 /** Device name (normalised) -> PNG data URI. */
-export type LogoMap = Record<string, string>;
+export type LogoMap = ImageMap;
 
 const STORE_FILE = "logos.json";
 const STORE_KEY = "logos";
 /** Logos live inside a JSON store, so they are downscaled before saving. */
 const LOGO_SIZE = 128;
 
-type StoreHandle = {
-  get: <T>(key: string) => Promise<T | undefined>;
-  set: (key: string, value: unknown) => Promise<void>;
-  save: () => Promise<void>;
-};
-
 /** Keyed by name so a logo survives reconnects and follows a rename. */
-export function logoKey(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function readLocal(): LogoMap {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    return raw ? (JSON.parse(raw) as LogoMap) : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeLocal(map: LogoMap) {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(map));
-  } catch {
-    /* storage unavailable */
-  }
-}
+export const logoKey = imageKey;
 
 /** Scale the chosen image into a square PNG small enough to store as text. */
 function toLogoDataUri(file: File): Promise<string> {
@@ -99,76 +74,12 @@ export function pickLogoFile(): Promise<string | null> {
 }
 
 export function useLogos() {
-  const [logos, setLogos] = useState<LogoMap>({});
-  const storeRef = useRef<StoreHandle | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      let loaded = readLocal();
-      if (isTauri) {
-        try {
-          const { load } = await import("@tauri-apps/plugin-store");
-          const store = (await load(STORE_FILE, { autoSave: true })) as unknown as StoreHandle;
-          storeRef.current = store;
-          const stored = await store.get<LogoMap>(STORE_KEY);
-          if (stored) loaded = stored;
-        } catch (err) {
-          console.error("logo store load failed", err);
-        }
-      }
-      if (!cancelled) setLogos(loaded);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const persist = useCallback(async (next: LogoMap) => {
-    setLogos(next);
-    writeLocal(next);
-    const store = storeRef.current;
-    if (!store) return;
-    try {
-      await store.set(STORE_KEY, next);
-      await store.save();
-    } catch (err) {
-      console.error("logo store save failed", err);
-    }
-  }, []);
-
-  const setLogo = useCallback(
-    async (name: string, dataUri: string) => {
-      await persist({ ...logos, [logoKey(name)]: dataUri });
-    },
-    [logos, persist],
-  );
-
-  const clearLogo = useCallback(
-    async (name: string) => {
-      const next = { ...logos };
-      delete next[logoKey(name)];
-      await persist(next);
-    },
-    [logos, persist],
-  );
-
-  /** Keep the logo attached when a device is renamed. */
-  const moveLogo = useCallback(
-    async (fromName: string, toName: string) => {
-      const from = logoKey(fromName);
-      const to = logoKey(toName);
-      if (from === to || !logos[from]) return;
-      const next = { ...logos, [to]: logos[from] };
-      delete next[from];
-      await persist(next);
-    },
-    [logos, persist],
-  );
-
-  const logoFor = useCallback((name: string) => logos[logoKey(name)], [logos]);
-
-  return { logos, logoFor, setLogo, clearLogo, moveLogo };
+  const { map, imageFor, setImage, clearImage, moveImage } = useImageMap(STORE_FILE, STORE_KEY);
+  return {
+    logos: map,
+    logoFor: imageFor,
+    setLogo: setImage,
+    clearLogo: clearImage,
+    moveLogo: moveImage,
+  };
 }

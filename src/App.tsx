@@ -5,6 +5,7 @@ import { DeviceCard } from "./components/DeviceCard";
 import { SettingsModal } from "./components/SettingsModal";
 import { useSettings } from "./context/SettingsContext";
 import type { BatteryReading, DeviceReading, DeviceSnapshot } from "./lib/bridge";
+import { CARD_TARGET, pickImage, useCardImages } from "./lib/images";
 import { pickLogoFile, useLogos } from "./lib/logos";
 import {
   EVENT_BATTERY,
@@ -43,6 +44,7 @@ export default function App() {
   const { t } = useTranslation();
   const { settings, ready } = useSettings();
   const { logoFor, setLogo, clearLogo, moveLogo } = useLogos();
+  const { cardImageFor, setCardImage, clearCardImage, moveCardImage } = useCardImages();
   const [reading, setReading] = useState<BatteryReading | null>(null);
   const [devices, setDevices] = useState<DeviceSnapshot | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -121,6 +123,24 @@ export default function App() {
     [setLogo],
   );
 
+  const pickCardImage = useCallback(
+    async (name: string) => {
+      const picture = await pickImage(CARD_TARGET);
+      if (picture) await setCardImage(name, picture);
+    },
+    [setCardImage],
+  );
+
+  // A rename has to carry both pictures, or the card loses its backdrop the
+  // moment someone corrects the name the receiver reported.
+  const renameArtwork = useCallback(
+    async (from: string, to: string) => {
+      await moveLogo(from, to);
+      await moveCardImage(from, to);
+    },
+    [moveLogo, moveCardImage],
+  );
+
   const cards = useMemo(() => visibleDevices(devices), [devices]);
   const onlineCount = cards.length;
 
@@ -190,6 +210,11 @@ export default function App() {
               clearLogoLabel={t("removeLogo")}
               unverifiedLabel={t("unverified")}
               unverifiedHint={t("unverifiedHint")}
+              image={cardImageFor(device.product)}
+              onPickImage={() => void pickCardImage(device.product)}
+              onClearImage={() => void clearCardImage(device.product)}
+              pickImageLabel={t("cardImage")}
+              clearImageLabel={t("removeCardImage")}
             />
           ))}
         </div>
@@ -250,7 +275,7 @@ export default function App() {
         logoFor={logoFor}
         onPickLogo={pickLogo}
         onClearLogo={clearLogo}
-        onRenameLogo={moveLogo}
+        onRenameLogo={renameArtwork}
       />
     </div>
   );

@@ -73,6 +73,8 @@ export const resources = {
       imageHint: "Seçtiğin görsel ortadan {{width}}×{{height}} olacak şekilde kırpılır",
       imageNone: "Yok",
       imageSet: "Seçili",
+      cardImage: "Kart görseli",
+      removeCardImage: "Kart görselini kaldır",
     },
   },
   en: {
@@ -149,6 +151,8 @@ export const resources = {
       imageHint: "What you pick is centre-cropped to {{width}}×{{height}}",
       imageNone: "None",
       imageSet: "Selected",
+      cardImage: "Card image",
+      removeCardImage: "Remove card image",
     },
   },
 } as const;
