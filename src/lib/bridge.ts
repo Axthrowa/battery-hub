@@ -105,6 +105,12 @@ export const testNotificationSound = (kind: SoundKind) =>
 export const closeToTray = () => safeInvoke<void>("close_to_tray");
 
 /** A byte the scan believes could be a state of charge. */
+/**
+ * Which channel the byte came from. A feature report is asked for by id; an
+ * input report arrives on its own, which is the only channel a gamepad has.
+ */
+export type ReportSource = "feature" | "input";
+
 export interface CandidateValue {
   usagePage: number;
   /** Pins the value to the collection the scan read it from. */
@@ -113,7 +119,16 @@ export interface CandidateValue {
   reportId: number;
   byteOffset: number;
   percent: number;
+  source: ReportSource;
+  /** Whether the report id prefixes an interrupt frame on this device. */
+  usesReportIds: boolean;
 }
+
+/**
+ * Why the scan has nothing to offer for a device: `silent` answered nothing at
+ * all, `noPercentByte` answered but held no byte that reads like a charge.
+ */
+export type Blocked = "silent" | "noPercentByte";
 
 export interface DeviceCandidate {
   id: string;
@@ -124,6 +139,8 @@ export interface DeviceCandidate {
   automatic: boolean;
   added: boolean;
   values: CandidateValue[];
+  /** Set only when `values` is empty and the device is not automatic. */
+  blocked: Blocked | null;
 }
 
 export interface LearnedDevice {
@@ -138,6 +155,9 @@ export interface LearnedDevice {
   /** Absent on devices taught before the collection was recorded. */
   interface?: number | null;
   usage?: number | null;
+  /** Absent on devices taught before input reports were scanned. */
+  source?: ReportSource;
+  usesReportIds?: boolean;
 }
 
 export const scanDevices = () => safeInvoke<DeviceCandidate[]>("scan_devices");

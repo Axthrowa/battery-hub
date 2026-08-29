@@ -32,6 +32,11 @@ export const resources = {
       scanAgain: "Yeniden Tara",
       scanEmpty: "Eklenebilecek yeni cihaz bulunamadı.",
       pickValueHint: "Cihazın gerçek pil yüzdesine en yakın değeri seçin:",
+      unreadableDevices: "Okunamayan cihazlar ({{n}})",
+      unreadableHint:
+        "Bunlar tarandı ama pil yüzdesi olarak okunabilecek bir bayt sunmadı. Cihazın kendi modu (ör. bir gamepad'in XInput modu) pil bilgisini hiç yayınlamıyor olabilir.",
+      blockedSilent: "yanıt yok",
+      blockedNoPercentByte: "pil baytı yok",
       alreadyAdded: "Eklendi",
       add: "Ekle",
       remove: "Kaldır",
@@ -114,6 +119,11 @@ export const resources = {
       scanAgain: "Scan Again",
       scanEmpty: "No new devices available to add.",
       pickValueHint: "Pick the value closest to the battery level shown on your device:",
+      unreadableDevices: "Devices that cannot be read ({{n}})",
+      unreadableHint:
+        "These were probed but offered no byte that reads like a battery level. The mode the device is in may publish no charge at all — an XInput gamepad, for one.",
+      blockedSilent: "no reports",
+      blockedNoPercentByte: "no battery byte",
       alreadyAdded: "Added",
       add: "Add",
       remove: "Remove",

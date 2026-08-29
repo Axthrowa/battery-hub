@@ -45,7 +45,7 @@ fn layout_of(dev: &HidDevice) -> Option<BatteryLayout> {
 
 /// Feature reports come back with the report ID as byte 0 — even for
 /// unnumbered devices, where it is `0x00`. The payload starts at byte 1.
-fn feature_payload(dev: &HidDevice, report_id: u8) -> Option<Vec<u8>> {
+pub(super) fn feature_payload(dev: &HidDevice, report_id: u8) -> Option<Vec<u8>> {
     let mut buf = [0u8; REPORT_MAX];
     buf[0] = report_id;
     let read = dev.get_feature_report(&mut buf).ok()?;
@@ -56,7 +56,7 @@ fn feature_payload(dev: &HidDevice, report_id: u8) -> Option<Vec<u8>> {
 /// Wait for one interrupt report belonging to `report_id`. Unlike feature
 /// reports, an interrupt read carries the leading ID byte only when the
 /// descriptor declares report IDs — reading it as data is the `0x02 → 2%` bug.
-fn input_payload(dev: &HidDevice, report_id: u8, uses_report_ids: bool) -> Option<Vec<u8>> {
+pub(super) fn input_payload(dev: &HidDevice, report_id: u8, uses_report_ids: bool) -> Option<Vec<u8>> {
     let deadline = Instant::now() + Duration::from_millis(INPUT_BUDGET_MS);
     loop {
         let mut buf = [0u8; REPORT_MAX];

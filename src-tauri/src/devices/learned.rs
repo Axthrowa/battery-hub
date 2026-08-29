@@ -1,12 +1,14 @@
 //! User-taught devices.
 //!
 //! Hardware that exposes no standard battery field still tends to publish the
-//! state of charge as a plain byte inside a vendor feature report. Guessing
+//! state of charge as a plain byte — inside a vendor feature report, or on the
+//! interrupt endpoint where a controller sends its inputs. Guessing
 //! which byte is unsafe on its own — see `hid_battery` — but once the user has
 //! confirmed the value they see on their device, the exact location can be
 //! stored and read back precisely on every poll.
 
 use super::hid;
+use super::hid_battery::{feature_payload, input_payload};
 use super::{Brand, DeviceReading};
 use hidapi::DeviceInfo;
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const STORE_FILE: &str = "devices.json";
-const REPORT_MAX: usize = 64;
 /// A state of charge moves. Nothing says how fast, so the window is generous:
 /// a keyboard resting at 92% through a working day is ordinary. A vendor report
 /// that has not changed one bit in six hours of polling is not a measurement —
@@ -26,6 +27,20 @@ const STALE_AFTER_MS: u64 = 6 * 60 * 60 * 1000;
 /// Guards against flagging a device on the single read that follows a long
 /// suspend, where the clock has moved but the hardware has barely been asked.
 const STALE_AFTER_POLLS: u32 = 60;
+
+/// Which of a device's two readable channels the taught byte came from.
+///
+/// A feature report is asked for by ID and answers on demand; an input report
+/// arrives on its own on the interrupt endpoint, which is where a gamepad —
+/// and most hardware that answers no feature report at all — keeps its charge.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReportSource {
+    /// Everything taught before input reports were scanned is one of these.
+    #[default]
+    Feature,
+    Input,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,6 +64,14 @@ pub struct LearnedDevice {
     /// HID usage inside the collection, paired with `usage_page`.
     #[serde(default)]
     pub usage: Option<u16>,
+    /// Where to read the byte back from.
+    #[serde(default)]
+    pub source: ReportSource,
+    /// Whether the descriptor numbers its reports. An interrupt read carries
+    /// the leading ID byte only then, so it decides where the payload starts —
+    /// and the scan already parsed the descriptor to find that out.
+    #[serde(default)]
+    pub uses_report_ids: bool,
     /// Evidence that the taught location really is telemetry: the report as it
     /// last read, and when it last differed. Persisted so the verdict survives
     /// restarts instead of starting over every launch.
@@ -61,8 +84,21 @@ pub struct LearnedDevice {
 }
 
 impl LearnedDevice {
-    pub fn key(vendor_id: u16, product_id: u16, usage_page: u16, report_id: u8, offset: usize) -> String {
-        format!("{vendor_id:04X}:{product_id:04X}:{usage_page:04X}:{report_id:02X}:{offset}")
+    /// Input reports get a suffix so they cannot collide with a feature report
+    /// of the same number — and so every entry taught before this keeps its id.
+    pub fn key(
+        vendor_id: u16,
+        product_id: u16,
+        usage_page: u16,
+        report_id: u8,
+        offset: usize,
+        source: ReportSource,
+    ) -> String {
+        let base = format!("{vendor_id:04X}:{product_id:04X}:{usage_page:04X}:{report_id:02X}:{offset}");
+        match source {
+            ReportSource::Feature => base,
+            ReportSource::Input => format!("{base}:I"),
+        }
     }
 
     /// Every collection the taught byte could live in.
@@ -220,25 +256,23 @@ pub fn read_all() -> Vec<DeviceReading> {
                 let Ok(handle) = api.open_path(info.path()) else {
                     continue;
                 };
-                let mut buf = [0u8; REPORT_MAX];
-                buf[0] = device.report_id;
-                let Ok(read) = handle.get_feature_report(&mut buf) else {
+                // Both helpers hand the payload back with the leading report-ID
+                // byte already off it, and `None` where this collection does not
+                // answer the report at all.
+                let payload = match device.source {
+                    ReportSource::Feature => feature_payload(&handle, device.report_id),
+                    ReportSource::Input => {
+                        input_payload(&handle, device.report_id, device.uses_report_ids)
+                    }
+                };
+                let Some(payload) = payload else {
                     continue;
                 };
-                // Byte 0 is the report ID; the payload starts after it. A read
-                // that short means this collection does not answer the report
-                // at all — slicing it would panic, and `panic = "abort"` in the
-                // release profile takes the whole tray app down with it.
-                let end = read.min(REPORT_MAX);
-                if end <= 1 {
-                    continue;
-                }
-                let payload = &buf[1..end];
                 let Some(raw) = payload.get(device.byte_offset).copied() else {
                     continue;
                 };
                 if let Some(percent) = device.percent(raw) {
-                    let verified = note_observation(&device.id, payload);
+                    let verified = note_observation(&device.id, &payload);
                     reading = Some(
                         DeviceReading::taught(
                             Brand::identify(device.vendor_id, "", &device.name),
@@ -271,4 +305,49 @@ pub fn read_all() -> Vec<DeviceReading> {
     });
 
     result.unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An entry exactly as the store held it before input reports were
+    /// scanned: no `source`, no `usesReportIds`, and an unsuffixed id.
+    const PRE_INPUT_ENTRY: &str = r#"[{
+        "id": "3554:FA09:FF04:06:5",
+        "name": "Aula F75",
+        "vendorId": 13652,
+        "productId": 64009,
+        "usagePage": 65284,
+        "reportId": 6,
+        "byteOffset": 5,
+        "maxValue": 100,
+        "interface": 1,
+        "usage": 2
+    }]"#;
+
+    /// The store is read with `unwrap_or_default`, so a field the older shape
+    /// does not carry would not fail loudly — it would quietly empty someone's
+    /// device list on the first launch after an update.
+    #[test]
+    fn entries_taught_before_input_reports_still_load() {
+        let list: Vec<LearnedDevice> = serde_json::from_str(PRE_INPUT_ENTRY).expect("older store");
+        let device = list.first().expect("one entry");
+        assert_eq!(device.source, ReportSource::Feature);
+        assert_eq!(device.byte_offset, 5);
+        // And the id it was stored under is the one the scan still builds for
+        // it, so the entry keeps reading as already added.
+        assert_eq!(
+            device.id,
+            LearnedDevice::key(13652, 64009, 0xFF04, 6, 5, ReportSource::Feature)
+        );
+    }
+
+    #[test]
+    fn an_input_byte_cannot_collide_with_the_feature_report_of_the_same_number() {
+        assert_ne!(
+            LearnedDevice::key(1, 2, 3, 4, 5, ReportSource::Feature),
+            LearnedDevice::key(1, 2, 3, 4, 5, ReportSource::Input)
+        );
+    }
 }

@@ -40,17 +40,40 @@ impl BatteryField {
     }
 }
 
+/// Payload bytes an Input report spends on axes and buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControlRange {
+    pub report_id: u8,
+    pub first_byte: usize,
+    /// Inclusive — a field ending mid-byte still owns the whole byte.
+    pub last_byte: usize,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BatteryLayout {
     /// Descriptor declares Report IDs → hidapi's `read()` prefixes the ID byte.
     pub uses_report_ids: bool,
     pub charge: Option<BatteryField>,
     pub charging: Option<BatteryField>,
+    /// Where the controls sit in each Input report. A gamepad left alone holds
+    /// its sticks perfectly still, so those bytes pass a "held steady and
+    /// reads like a percentage" test as convincingly as a real state of
+    /// charge does — and the scan would offer a resting axis as a battery.
+    pub control_bytes: Vec<ControlRange>,
 }
 
 impl BatteryLayout {
     pub fn has_battery(&self) -> bool {
         self.charge.is_some()
+    }
+
+    /// Whether this Input payload byte is spoken for by a declared control.
+    pub fn is_control_byte(&self, report_id: u8, offset: usize) -> bool {
+        self.control_bytes.iter().any(|range| {
+            range.report_id == report_id
+                && offset >= range.first_byte
+                && offset <= range.last_byte
+        })
     }
 }
 
@@ -159,6 +182,9 @@ pub fn parse(desc: &[u8]) -> BatteryLayout {
                     collect(&mut out, &g, kind, base, &usages, usage_min, usage_max);
                 }
                 let width = g.report_size.saturating_mul(g.report_count);
+                if kind == ReportKind::Input && uval & 0x01 == 0 {
+                    note_controls(&mut out, &g, base, width);
+                }
                 bump(&mut cursors, kind, g.report_id, width);
                 usages.clear();
                 usage_min = None;
@@ -179,6 +205,28 @@ pub fn parse(desc: &[u8]) -> BatteryLayout {
     }
 
     out
+}
+
+/// Generic Desktop and Button — where a controller declares its own inputs.
+const PAGE_GENERIC_DESKTOP: u16 = 0x01;
+const PAGE_BUTTON: u16 = 0x09;
+
+/// Remember the bytes an Input field on a control page occupies.
+///
+/// A battery never hides in one of these: firmware that reports a charge does
+/// it on the Generic Device Controls page, the Battery System page, or a
+/// vendor page of its own. Anything declared as an axis or a button is a
+/// control, and a control is exactly what the byte scan cannot tell apart
+/// from a charge while the device sits untouched.
+fn note_controls(out: &mut BatteryLayout, g: &GlobalState, base_bits: u32, width_bits: u32) {
+    if width_bits == 0 || !matches!(g.usage_page, PAGE_GENERIC_DESKTOP | PAGE_BUTTON) {
+        return;
+    }
+    out.control_bytes.push(ControlRange {
+        report_id: g.report_id,
+        first_byte: (base_bits / 8) as usize,
+        last_byte: (base_bits.saturating_add(width_bits - 1) / 8) as usize,
+    });
 }
 
 fn cursor(cursors: &[((ReportKind, u8), u32)], kind: ReportKind, id: u8) -> u32 {
@@ -403,6 +451,39 @@ mod tests {
         0xC0, //       End Collection
     ];
 
+    /// A controller: 16 buttons, four 8-bit axes, then a vendor byte. Nothing
+    /// on a battery page, and the layout an XInput-style pad actually sends.
+    const GAMEPAD_INPUT: &[u8] = &[
+        0x05, 0x01, // Usage Page (Generic Desktop)
+        0x09, 0x05, // Usage (Gamepad)
+        0xA1, 0x01, // Collection (Application)
+        0x05, 0x09, //   Usage Page (Button)
+        0x19, 0x01, //   Usage Minimum (1)
+        0x29, 0x10, //   Usage Maximum (16)
+        0x15, 0x00, //   Logical Minimum (0)
+        0x25, 0x01, //   Logical Maximum (1)
+        0x75, 0x01, //   Report Size (1)
+        0x95, 0x10, //   Report Count (16)
+        0x81, 0x02, //   Input (Data,Var,Abs)   <- bytes 0-1
+        0x05, 0x01, //   Usage Page (Generic Desktop)
+        0x09, 0x30, //   Usage (X)
+        0x09, 0x31, //   Usage (Y)
+        0x09, 0x32, //   Usage (Z)
+        0x09, 0x35, //   Usage (Rz)
+        0x15, 0x00, //   Logical Minimum (0)
+        0x26, 0xFF, 0x00, // Logical Maximum (255)
+        0x75, 0x08, //   Report Size (8)
+        0x95, 0x04, //   Report Count (4)
+        0x81, 0x02, //   Input (Data,Var,Abs)   <- bytes 2-5
+        0x06, 0x00, 0xFF, // Usage Page (Vendor Defined FF00)
+        0x09, 0x20, //   Usage (vendor 0x20)
+        0x25, 0x64, //   Logical Maximum (100)
+        0x75, 0x08, //   Report Size (8)
+        0x95, 0x01, //   Report Count (1)
+        0x81, 0x02, //   Input (Data,Var,Abs)   <- byte 6
+        0xC0, //       End Collection
+    ];
+
     #[test]
     fn finds_battery_strength_feature_field() {
         let layout = parse(BATTERY_STRENGTH_FEATURE);
@@ -491,5 +572,31 @@ mod tests {
         assert_eq!(plausible_percent(&report, false), Some(2));
         assert_eq!(plausible_percent(&[0x02], true), None);
         assert_eq!(plausible_percent(&[], true), None);
+    }
+
+    /// The scan offers bytes that held still between two samples, and a pad
+    /// left alone holds every axis still. Marking the controls is what keeps a
+    /// resting stick from being offered as a state of charge.
+    #[test]
+    fn a_gamepad_marks_its_axes_and_buttons_as_controls() {
+        let layout = parse(GAMEPAD_INPUT);
+        assert!(!layout.has_battery());
+        for offset in 0..=5 {
+            assert!(
+                layout.is_control_byte(0, offset),
+                "byte {offset} belongs to a button or an axis"
+            );
+        }
+        // The vendor byte is where a charge would actually be published.
+        assert!(!layout.is_control_byte(0, 6));
+    }
+
+    /// Padding is constant, never a reading, and never claimed as a control:
+    /// the battery byte after it has to stay offerable.
+    #[test]
+    fn declared_battery_bytes_are_not_controls() {
+        let layout = parse(BATTERY_SYSTEM_INPUT);
+        assert!(layout.has_battery());
+        assert!(layout.control_bytes.is_empty());
     }
 }

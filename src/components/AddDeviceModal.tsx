@@ -21,13 +21,17 @@ interface AddDeviceModalProps {
 
 function deviceKey(candidate: DeviceCandidate, value: CandidateValue) {
   const hex = (n: number, width: number) => n.toString(16).toUpperCase().padStart(width, "0");
-  return [
+  const base = [
     hex(candidate.vendorId, 4),
     hex(candidate.productId, 4),
     hex(value.usagePage, 4),
     hex(value.reportId, 2),
     value.byteOffset,
   ].join(":");
+  // Mirrors LearnedDevice::key on the Rust side: an input report is a
+  // different location from the feature report of the same number, and
+  // everything taught before input reports were scanned keeps its plain id.
+  return value.source === "input" ? `${base}:I` : base;
 }
 
 export function AddDeviceModal({
@@ -72,6 +76,8 @@ export function AddDeviceModal({
         reportId: value.reportId,
         byteOffset: value.byteOffset,
         maxValue: 100,
+        source: value.source,
+        usesReportIds: value.usesReportIds,
       });
       if (list) setAdded(list);
       setCandidates((current) =>
@@ -101,6 +107,9 @@ export function AddDeviceModal({
   if (!open) return null;
 
   const addable = candidates.filter((item) => !item.automatic && item.values.length > 0);
+  // Listed rather than dropped: a scan that shows nothing for the device
+  // someone is holding reads as a scan that never saw it.
+  const unreadable = candidates.filter((item) => item.blocked != null);
 
   return (
     <div
@@ -208,6 +217,30 @@ export function AddDeviceModal({
               </section>
             );
           })}
+
+          {unreadable.length > 0 ? (
+            <details className="mt-2 rounded-xl border border-white/8 bg-ink-850/40">
+              <summary className="cursor-pointer list-none px-3 py-2 text-xs text-neutral-400 transition hover:text-neutral-200">
+                {t("unreadableDevices", { n: unreadable.length })}
+              </summary>
+              <p className="px-3 pb-1 text-[10px] leading-relaxed text-neutral-600">
+                {t("unreadableHint")}
+              </p>
+              <ul className="px-3 pb-3">
+                {unreadable.map((item) => (
+                  <li
+                    key={item.id}
+                    className="flex items-baseline justify-between gap-2 py-1 text-[11px]"
+                  >
+                    <span className="min-w-0 truncate text-neutral-400">{item.name}</span>
+                    <span className="shrink-0 text-neutral-600">
+                      {t(item.blocked === "silent" ? "blockedSilent" : "blockedNoPercentByte")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
 
           {added.length > 0 ? (
             <section className="mt-4 border-t border-white/8 pt-3">
